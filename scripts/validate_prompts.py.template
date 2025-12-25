@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""
+Validates all 40 phase prompts for consistency.
+Exit 0 = valid, Exit 1 = errors found.
+"""
+
+import sys
+import re
+import shutil
+from pathlib import Path
+
+# Check dependencies first
+def check_dependencies():
+    """Verify required tools are available."""
+    required = ['jq']
+    for tool in required:
+        if not shutil.which(tool):
+            print(f"ERROR: Required tool '{tool}' not found", file=sys.stderr)
+            sys.exit(1)
+
+check_dependencies()
+
+PHASE_DEPS = {
+    1: [], 2: [1], 3: [2], 4: [3], 5: [3,4],
+    6: [1,2], 7: [6], 8: [3,7], 9: [3], 10: list(range(1,10)),
+    11: [5], 12: [11], 13: [11], 14: [11], 15: [11,12,13,14],
+    16: [15], 17: [11,12,13,14], 18: [16,17], 19: [16,17], 20: list(range(11,20)),
+    21: [12,13], 22: [5], 23: [22], 24: [22], 25: [5],
+    26: [5], 27: [7], 28: [27], 29: [21,23,24,25,26,28], 30: list(range(21,30)),
+    31: [19,20], 32: [31], 33: [31], 34: [31], 35: [34],
+    36: [35], 37: [31], 38: [31,35,37], 39: [38], 40: list(range(1,40))
+}
+
+REQUIRED_SECTIONS = [
+    'Objective',
+    'Prerequisites',
+    'Inputs',
+    'Outputs',
+    'Specification',
+    'Required Tests',
+    'Acceptance Criteria',
+    'Estimated Scope'
+]
+
+# Minimum test counts for HIGH/MEDIUM complexity phases
+MIN_TESTS = {
+    3: 10, 4: 5, 5: 8, 6: 6, 15: 6, 16: 4, 19: 4, 29: 4, 31: 4, 36: 4, 38: 6
+}
+
+def find_prompt(phase_num: int) -> Path | None:
+    """Find the prompt file for a given phase number."""
+    matches = list(Path("docs/prompts").glob(f"phase-{phase_num:02d}-*.md"))
+    return matches[0] if matches else None
+
+def extract_prerequisites(content: str) -> list[int]:
+    """Extract phase numbers from Prerequisites table."""
+    prereq_section = re.search(r'## Prerequisites\s*\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+    if not prereq_section:
+        return []
+
+    phases = []
+    for match in re.finditer(r'\|\s*(\d{1,2})\s*\|', prereq_section.group(1)):
+        phases.append(int(match.group(1)))
+    return phases
+
+def extract_sections(content: str) -> dict[str, str]:
+    """Extract major sections from prompt."""
+    sections = {}
+    current = None
+    lines = []
+
+    for line in content.split('\n'):
+        if line.startswith('## '):
+            if current:
+                sections[current] = '\n'.join(lines)
+            current = line[3:].strip()
+            lines = []
+        else:
+            lines.append(line)
+
+    if current:
+        sections[current] = '\n'.join(lines)
+    return sections
+
+def count_test_rows(content: str) -> int:
+    """Count test rows in Required Tests table."""
+    tests_section = re.search(r'## Required Tests\s*\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+    if not tests_section:
+        return 0
+
+    # Count table rows (lines starting with |, excluding header and separator)
+    rows = [l for l in tests_section.group(1).split('\n')
+            if l.strip().startswith('|') and not l.strip().startswith('|---')]
+    return max(0, len(rows) - 1)  # Subtract header row
+
+def validate_acceptance_criteria(content: str) -> list[str]:
+    """Check that acceptance criteria are executable commands."""
+    errors = []
+    valid_prefixes = [
+        'cmake', 'ctest', 'test', './build', 'grep', 'wc',
+        'jq', 'valgrind', 'python3', 'bash', 'diff'
+    ]
+
+    for match in re.finditer(r'- \[ \] `([^`]+)`', content):
+        cmd = match.group(1)
+        first_word = cmd.split()[0]
+
+        if not any(first_word.startswith(v) for v in valid_prefixes):
+            if not first_word.startswith('./'):
+                errors.append(f"Unknown command prefix: {cmd[:50]}...")
+
+    return errors
+
+def validate_required_tests(content: str) -> list[str]:
+    """Check that Required Tests section has proper table format."""
+    errors = []
+    tests_section = re.search(r'## Required Tests\s*\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+
+    if not tests_section:
+        errors.append("Missing 'Required Tests' section")
+        return errors
+
+    table_match = re.search(r'\|.*\|.*\|.*\|', tests_section.group(1))
+    if not table_match:
+        errors.append("Required Tests section missing table format")
+
+    return errors
+
+def validate_test_specs() -> list[str]:
+    """Check that all referenced test_specs files exist."""
+    errors = []
+    test_specs_dir = Path("docs/test_specs")
+
+    # Phases that should have external test specs
+    PHASES_WITH_SPECS = [3, 4, 5, 6, 15, 16, 19, 29, 31, 36, 38]
+
+    if not test_specs_dir.exists():
+        errors.append("docs/test_specs directory does not exist")
+        return errors
+
+    for phase in PHASES_WITH_SPECS:
+        pattern = f"phase-{phase:02d}-*.md"
+        matches = list(test_specs_dir.glob(pattern))
+        if not matches:
+            errors.append(f"Missing test spec file: docs/test_specs/phase-{phase:02d}-*.md")
+        elif len(matches) > 1:
+            errors.append(f"Multiple test spec files for phase {phase}: {[m.name for m in matches]}")
+
+    return errors
+
+def main():
+    errors = []
+    prompts_dir = Path("docs/prompts")
+
+    if not prompts_dir.exists():
+        print("ERROR: docs/prompts directory does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    # Check all files exist
+    for i in range(1, 41):
+        path = find_prompt(i)
+        if not path:
+            errors.append(f"Phase {i:02d}: Prompt file missing")
+            continue
+
+        content = path.read_text()
+
+        # Check prerequisites match PHASE_DEPS
+        prereqs = set(extract_prerequisites(content))
+        expected = set(PHASE_DEPS[i])
+        if prereqs != expected:
+            missing = expected - prereqs
+            extra = prereqs - expected
+            if missing:
+                errors.append(f"Phase {i:02d}: Missing prerequisites {sorted(missing)}")
+            if extra:
+                errors.append(f"Phase {i:02d}: Extra prerequisites {sorted(extra)}")
+
+        # Check required sections exist
+        sections = extract_sections(content)
+        for sec in REQUIRED_SECTIONS:
+            found = sec in sections or any(sec.lower() in s.lower() for s in sections)
+            if not found:
+                errors.append(f"Phase {i:02d}: Missing section '{sec}'")
+
+        # Check acceptance criteria are executable
+        cmd_errors = validate_acceptance_criteria(content)
+        for e in cmd_errors:
+            errors.append(f"Phase {i:02d}: {e}")
+
+        # Check Required Tests format
+        test_errors = validate_required_tests(content)
+        for e in test_errors:
+            errors.append(f"Phase {i:02d}: {e}")
+
+        # Check minimum test count for complex phases
+        if i in MIN_TESTS:
+            test_count = count_test_rows(content)
+            if test_count < MIN_TESTS[i]:
+                errors.append(f"Phase {i:02d}: Has {test_count} tests, requires >={MIN_TESTS[i]}")
+
+    # Check test spec files exist
+    spec_errors = validate_test_specs()
+    for e in spec_errors:
+        errors.append(f"Test specs: {e}")
+
+    # Report results
+    if errors:
+        print("VALIDATION FAILED", file=sys.stderr)
+        for e in sorted(errors):
+            print(f"  ERROR: {e}", file=sys.stderr)
+        print(f"\n{len(errors)} errors found.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Validation passed: 40 prompts verified")
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()

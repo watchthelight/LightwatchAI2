@@ -230,6 +230,12 @@ fi
 ```
 Run this checklist before taking any action. Address warnings before proceeding.
 
+**Lock file notes:**
+- Created on session start: `echo $$ > .lightwatch.lock`
+- Removed on phase completion: `rm -f .lightwatch.lock`
+- If session crashes, lock becomes stale — recovery checklist detects this
+- Manual removal: `rm .lightwatch.lock` (only if no other session running)
+
 **On phase completion:**
 1. Update state file with completed deliverables
 2. Set `phase_status = "COMPLETE"`
@@ -342,7 +348,17 @@ LightwatchAI2/
 ## ⚠️ CRITICAL: Read This First
 
 **Before taking ANY action on session start, you MUST:**
-1. Read the full orchestration prompt: `cat docs/MASTER_PROMPT.md`
+1. Read the full orchestration prompt:
+   ```bash
+   if [ -f docs/MASTER_PROMPT.md ]; then
+       cat docs/MASTER_PROMPT.md
+   else
+       echo "ERROR: docs/MASTER_PROMPT.md not found"
+       echo "This file should have been created during Phase 0"
+       echo "If starting fresh, copy the original Master_Prompt.md to docs/MASTER_PROMPT.md"
+       exit 1
+   fi
+   ```
 2. Run the session recovery checklist (see below)
 3. Check `.lightwatch_state.json` for current state
 
@@ -401,14 +417,7 @@ git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com"
 Claude MUST NOT be listed as commit author under any circumstances.
 
 ### Commit Message Format
-```
-[PHASE-XX] <type>: <subject>
-
-<body>
-
-Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>
-```
-Types: `feat`, `fix`, `test`, `docs`, `refactor`, `perf`, `chore`
+See detailed format specification below. Summary: `[PHASE-XX] <type>: <subject>` with Signed-off-by line.
 
 ### Code Style
 - C++17 standard
@@ -723,641 +732,25 @@ Create authoritative API contract files that define cross-phase interfaces. Thes
 
 ### Deliverables
 
-#### docs/contracts/tensor.hpp
-```cpp
-// LightwatchAI2 API Contract: Tensor
-// Defined by: Phase 03
-// Consumers: 04, 05, 08, 09, 11-19, 21-25, 31-36
-// DO NOT MODIFY without updating all consumer phases
-
-#pragma once
-
-#include <vector>
-#include <initializer_list>
-#include <memory>
-#include <cstddef>
-
-namespace lightwatch {
-
-using Shape = std::vector<size_t>;
-
-template<typename T>
-class Tensor {
-public:
-    // Construction
-    Tensor();
-    explicit Tensor(const Shape& shape);
-    Tensor(const Shape& shape, const T* data);
-    Tensor(const Shape& shape, std::initializer_list<T> data);
-
-    // Static factories
-    static Tensor zeros(const Shape& shape);
-    static Tensor ones(const Shape& shape);
-    static Tensor full(const Shape& shape, T value);
-    static Tensor randn(const Shape& shape);  // Normal distribution N(0,1)
-    static Tensor rand(const Shape& shape);   // Uniform [0,1)
-
-    // Element access
-    T& operator()(const std::vector<size_t>& indices);
-    const T& operator()(const std::vector<size_t>& indices) const;
-    T& at(const std::vector<size_t>& indices);
-    const T& at(const std::vector<size_t>& indices) const;
-
-    // Properties
-    const Shape& shape() const;
-    size_t size(int dim) const;  // Negative dims count from end
-    size_t numel() const;        // Total elements
-    size_t ndim() const;
-    T* data();
-    const T* data() const;
-
-    // Shape operations
-    Tensor reshape(const Shape& new_shape) const;
-    Tensor view(const Shape& new_shape) const;  // May share data
-    Tensor transpose(int dim0, int dim1) const;
-    Tensor permute(const std::vector<int>& dims) const;
-    Tensor squeeze(int dim = -1) const;
-    Tensor unsqueeze(int dim) const;
-    Tensor slice(int dim, size_t start, size_t end) const;
-    Tensor contiguous() const;
-    bool is_contiguous() const;
-
-    // Reductions
-    Tensor sum(int dim = -1, bool keepdim = false) const;
-    Tensor mean(int dim = -1, bool keepdim = false) const;
-    Tensor max(int dim = -1, bool keepdim = false) const;
-    Tensor min(int dim = -1, bool keepdim = false) const;
-    Tensor var(int dim = -1, bool keepdim = false) const;
-    T item() const;  // For scalar tensors
-
-    // Element-wise ops (return new tensor)
-    Tensor operator+(const Tensor& other) const;
-    Tensor operator-(const Tensor& other) const;
-    Tensor operator*(const Tensor& other) const;  // Hadamard product
-    Tensor operator/(const Tensor& other) const;
-    Tensor operator-() const;
-    Tensor abs() const;
-    Tensor sqrt() const;
-    Tensor exp() const;
-    Tensor log() const;
-    Tensor pow(T exponent) const;
-
-    // Scalar ops
-    Tensor operator+(T scalar) const;
-    Tensor operator-(T scalar) const;
-    Tensor operator*(T scalar) const;
-    Tensor operator/(T scalar) const;
-
-    // In-place ops (return reference for chaining)
-    Tensor& fill_(T value);
-    Tensor& zero_();
-    Tensor& add_(const Tensor& other);
-    Tensor& sub_(const Tensor& other);
-    Tensor& mul_(const Tensor& other);
-    Tensor& div_(const Tensor& other);
-
-    // Comparison (return boolean tensor)
-    Tensor<bool> operator==(const Tensor& other) const;
-    Tensor<bool> operator!=(const Tensor& other) const;
-    Tensor<bool> operator<(const Tensor& other) const;
-    Tensor<bool> operator<=(const Tensor& other) const;
-    Tensor<bool> operator>(const Tensor& other) const;
-    Tensor<bool> operator>=(const Tensor& other) const;
-
-    // Utilities
-    Tensor clone() const;
-
-private:
-    Shape shape_;
-    std::shared_ptr<T[]> data_;
-    std::vector<size_t> strides_;
-    size_t offset_ = 0;
-};
-
-// Free functions
-template<typename T>
-Tensor<T> matmul(const Tensor<T>& a, const Tensor<T>& b);
-
-template<typename T>
-Tensor<T> concat(const std::vector<Tensor<T>>& tensors, int dim);
-
-template<typename T>
-Tensor<T> stack(const std::vector<Tensor<T>>& tensors, int dim);
-
-template<typename T>
-Tensor<T> where(const Tensor<bool>& condition, const Tensor<T>& x, const Tensor<T>& y);
-
-}  // namespace lightwatch
-```
-
-#### docs/contracts/autograd.hpp
-```cpp
-// LightwatchAI2 API Contract: Autograd
-// Defined by: Phase 05
-// Consumers: 08, 11-19, 21-25, 31
-// DO NOT MODIFY without updating all consumer phases
-
-#pragma once
-
-#include "tensor.hpp"
-#include <memory>
-#include <vector>
-#include <string>
-#include <functional>
-
-namespace lightwatch::autograd {
-
-// Forward declarations
-class Function;
-class Variable;
-
-class Variable {
-public:
-    Variable();
-    explicit Variable(Tensor<float> data, bool requires_grad = false);
-
-    // Access underlying tensor
-    Tensor<float>& data();
-    const Tensor<float>& data() const;
-
-    // Gradient access
-    Tensor<float>& grad();
-    const Tensor<float>& grad() const;
-    bool has_grad() const;
-    bool requires_grad() const;
-    void set_requires_grad(bool requires);
-    void zero_grad();
-
-    // Shape delegation
-    const Shape& shape() const;
-    size_t size(int dim) const;
-    size_t numel() const;
-    size_t ndim() const;
-
-    // Backward pass
-    void backward();
-    void backward(const Tensor<float>& grad_output);
-
-    // Computation graph
-    void set_grad_fn(std::shared_ptr<Function> fn);
-    std::shared_ptr<Function> grad_fn() const;
-
-    // Detach from graph (returns new Variable with no grad_fn)
-    Variable detach() const;
-
-    // Retain gradient for non-leaf variables
-    void retain_grad();
-
-private:
-    Tensor<float> data_;
-    Tensor<float> grad_;
-    bool requires_grad_ = false;
-    bool has_grad_ = false;
-    bool retain_grad_ = false;
-    std::shared_ptr<Function> grad_fn_;
-};
-
-class Function {
-public:
-    virtual ~Function() = default;
-
-    // Compute gradients given upstream gradient
-    virtual std::vector<Tensor<float>> backward(const Tensor<float>& grad_output) = 0;
-
-    // Access saved tensors/variables
-    const std::vector<Variable>& saved_variables() const;
-
-protected:
-    // Context for saving values needed in backward
-    void save_for_backward(const Variable& v);
-    void save_for_backward(const Tensor<float>& t);
-
-    std::vector<Variable> saved_variables_;
-    std::vector<Tensor<float>> saved_tensors_;
-};
-
-// Differentiable operations (return Variable with grad tracking)
-namespace ops {
-    // Arithmetic
-    Variable add(const Variable& a, const Variable& b);
-    Variable sub(const Variable& a, const Variable& b);
-    Variable mul(const Variable& a, const Variable& b);  // Element-wise
-    Variable div(const Variable& a, const Variable& b);
-    Variable neg(const Variable& x);
-
-    // Matrix operations
-    Variable matmul(const Variable& a, const Variable& b);
-    Variable transpose(const Variable& x, int dim0, int dim1);
-
-    // Activations
-    Variable relu(const Variable& x);
-    Variable gelu(const Variable& x);
-    Variable silu(const Variable& x);  // Swish
-    Variable sigmoid(const Variable& x);
-    Variable tanh(const Variable& x);
-    Variable softmax(const Variable& x, int dim);
-    Variable log_softmax(const Variable& x, int dim);
-
-    // Reductions
-    Variable sum(const Variable& x, int dim = -1, bool keepdim = false);
-    Variable mean(const Variable& x, int dim = -1, bool keepdim = false);
-
-    // Shape operations
-    Variable reshape(const Variable& x, const Shape& new_shape);
-    Variable squeeze(const Variable& x, int dim = -1);
-    Variable unsqueeze(const Variable& x, int dim);
-
-    // Indexing
-    Variable slice(const Variable& x, int dim, size_t start, size_t end);
-    Variable index_select(const Variable& x, int dim, const Tensor<int32_t>& indices);
-
-    // Misc
-    Variable dropout(const Variable& x, float p, bool training);
-    Variable layer_norm(const Variable& x, const Variable& weight, const Variable& bias, float eps);
-}
-
-// No-grad context (RAII)
-class NoGradGuard {
-public:
-    NoGradGuard();
-    ~NoGradGuard();
-private:
-    static thread_local int guard_count_;
-};
-
-bool is_grad_enabled();
-
-}  // namespace lightwatch::autograd
-```
-
-#### docs/contracts/tokenizer.hpp
-```cpp
-// LightwatchAI2 API Contract: Tokenizer
-// Defined by: Phases 06-07
-// Consumers: 08, 27, 38
-// DO NOT MODIFY without updating all consumer phases
-
-#pragma once
-
-#include <string>
-#include <vector>
-#include <unordered_map>
-#include <cstdint>
-
-namespace lightwatch::tokenizer {
-
-using TokenId = int32_t;
-
-// GPT-2 special token IDs (from official tokenizer)
-struct SpecialTokens {
-    static constexpr TokenId PAD = 50256;  // Same as EOS for GPT-2
-    static constexpr TokenId UNK = 50256;  // GPT-2 has no UNK, uses byte fallback
-    static constexpr TokenId BOS = 50256;  // Not used in GPT-2
-    static constexpr TokenId EOS = 50256;  // <|endoftext|>
-};
-
-class Vocabulary {
-public:
-    Vocabulary();
-
-    // Token operations
-    TokenId add_token(const std::string& token);
-    TokenId token_to_id(const std::string& token) const;
-    std::string id_to_token(TokenId id) const;
-
-    bool contains(const std::string& token) const;
-    bool contains(TokenId id) const;
-    size_t size() const;
-
-    // Special tokens
-    TokenId pad_id() const;
-    TokenId eos_id() const;
-    bool is_special_token(TokenId id) const;
-
-    // Serialization
-    void save(const std::string& path) const;
-    static Vocabulary load(const std::string& path);
-
-    // Load from GPT-2 format
-    static Vocabulary from_encoder_json(const std::string& path);
-
-private:
-    std::unordered_map<std::string, TokenId> token_to_id_;
-    std::vector<std::string> id_to_token_;
-};
-
-class BPETokenizer {
-public:
-    BPETokenizer();
-
-    // Encode text to token IDs
-    std::vector<TokenId> encode(const std::string& text) const;
-
-    // Decode token IDs to text
-    std::string decode(const std::vector<TokenId>& tokens) const;
-
-    // Batch operations
-    std::vector<std::vector<TokenId>> encode_batch(
-        const std::vector<std::string>& texts) const;
-    std::vector<std::string> decode_batch(
-        const std::vector<std::vector<TokenId>>& token_batches) const;
-
-    // Vocabulary access
-    const Vocabulary& vocab() const;
-    size_t vocab_size() const;
-
-    // Special tokens
-    TokenId pad_id() const;
-    TokenId eos_id() const;
-
-    // Factory methods
-    static BPETokenizer from_files(
-        const std::string& vocab_path,    // encoder.json
-        const std::string& merges_path);  // vocab.bpe
-
-    static BPETokenizer gpt2(const std::string& vocab_dir = "data/vocab");
-
-    // Serialization
-    void save(const std::string& path) const;
-    static BPETokenizer load(const std::string& path);
-
-private:
-    Vocabulary vocab_;
-    std::vector<std::pair<std::string, std::string>> merges_;
-    // Hash function for string pairs
-    struct PairHash {
-        size_t operator()(const std::pair<std::string, std::string>& p) const {
-            return std::hash<std::string>{}(p.first) ^
-                   (std::hash<std::string>{}(p.second) << 1);
-        }
-    };
-    std::unordered_map<std::pair<std::string, std::string>, int, PairHash> merge_ranks_;
-};
-
-}  // namespace lightwatch::tokenizer
-```
-
-#### docs/contracts/module.hpp
-```cpp
-// LightwatchAI2 API Contract: Module
-// Defined by: Phase 11
-// Consumers: 12-19, 31
-// DO NOT MODIFY without updating all consumer phases
-
-#pragma once
-
-#include "autograd.hpp"
-#include <vector>
-#include <string>
-#include <unordered_map>
-#include <memory>
-#include <ostream>
-#include <istream>
-
-namespace lightwatch::nn {
-
-class Module {
-public:
-    virtual ~Module() = default;
-
-    // Forward pass - derived classes implement this
-    virtual autograd::Variable forward(const autograd::Variable& input) = 0;
-
-    // Multi-input forward (for attention, etc.)
-    virtual autograd::Variable forward(
-        const autograd::Variable& input,
-        const autograd::Variable& other) {
-        (void)other;
-        return forward(input);
-    }
-
-    // Parameter access
-    std::vector<autograd::Variable*> parameters();
-    std::vector<std::pair<std::string, autograd::Variable*>> named_parameters();
-    size_t num_parameters() const;
-
-    // Submodule access
-    std::vector<Module*> modules();
-    std::vector<std::pair<std::string, Module*>> named_modules();
-
-    // Training mode
-    void train(bool mode = true);
-    void eval();
-    bool is_training() const;
-
-    // Gradient control
-    void zero_grad();
-    void requires_grad_(bool requires_grad);
-
-    // Serialization
-    virtual void save_state(std::ostream& os) const;
-    virtual void load_state(std::istream& is);
-
-    // State dict (for HuggingFace compatibility)
-    std::unordered_map<std::string, Tensor<float>> state_dict() const;
-    void load_state_dict(const std::unordered_map<std::string, Tensor<float>>& dict);
-
-protected:
-    bool training_ = true;
-
-    // Registration
-    void register_parameter(const std::string& name, autograd::Variable& param);
-    void register_module(const std::string& name, std::shared_ptr<Module> module);
-    void register_buffer(const std::string& name, Tensor<float>& buffer);
-
-private:
-    std::vector<std::pair<std::string, autograd::Variable*>> parameters_;
-    std::vector<std::pair<std::string, std::shared_ptr<Module>>> submodules_;
-    std::vector<std::pair<std::string, Tensor<float>*>> buffers_;
-};
-
-// Common layer types (signatures only - implementations in respective phases)
-
-class Linear : public Module {
-public:
-    Linear(size_t in_features, size_t out_features, bool bias = true);
-    autograd::Variable forward(const autograd::Variable& input) override;
-
-    autograd::Variable weight;
-    autograd::Variable bias;
-
-private:
-    size_t in_features_;
-    size_t out_features_;
-    bool has_bias_;
-};
-
-class LayerNorm : public Module {
-public:
-    LayerNorm(size_t normalized_shape, float eps = 1e-5);
-    autograd::Variable forward(const autograd::Variable& input) override;
-
-    autograd::Variable weight;
-    autograd::Variable bias;
-
-private:
-    size_t normalized_shape_;
-    float eps_;
-};
-
-class Embedding : public Module {
-public:
-    Embedding(size_t num_embeddings, size_t embedding_dim);
-    autograd::Variable forward(const Tensor<int32_t>& indices);
-    autograd::Variable forward(const autograd::Variable& input) override;
-
-    autograd::Variable weight;
-
-private:
-    size_t num_embeddings_;
-    size_t embedding_dim_;
-};
-
-class Dropout : public Module {
-public:
-    explicit Dropout(float p = 0.1);
-    autograd::Variable forward(const autograd::Variable& input) override;
-
-private:
-    float p_;
-};
-
-}  // namespace lightwatch::nn
-```
-
-#### docs/contracts/optimizer.hpp
-```cpp
-// LightwatchAI2 API Contract: Optimizer
-// Defined by: Phase 22
-// Consumers: 23-26, 29
-// DO NOT MODIFY without updating all consumer phases
-
-#pragma once
-
-#include "autograd.hpp"
-#include <vector>
-#include <unordered_map>
-#include <string>
-
-namespace lightwatch::optim {
-
-struct OptimizerOptions {
-    float lr = 1e-3;
-    float weight_decay = 0.0;
-};
-
-class Optimizer {
-public:
-    explicit Optimizer(std::vector<autograd::Variable*> params, OptimizerOptions options = {});
-    virtual ~Optimizer() = default;
-
-    // Perform one optimization step
-    virtual void step() = 0;
-
-    // Zero all parameter gradients
-    virtual void zero_grad();
-
-    // Parameter group management
-    void add_param_group(std::vector<autograd::Variable*> params, OptimizerOptions options = {});
-
-    // Learning rate access
-    float get_lr() const;
-    void set_lr(float lr);
-
-    // State access (for checkpointing)
-    virtual std::unordered_map<std::string, Tensor<float>> state_dict() const;
-    virtual void load_state_dict(const std::unordered_map<std::string, Tensor<float>>& dict);
-
-protected:
-    struct ParamGroup {
-        std::vector<autograd::Variable*> params;
-        OptimizerOptions options;
-    };
-
-    std::vector<ParamGroup> param_groups_;
-
-    // Per-parameter state (momentum buffers, Adam moments, etc.)
-    std::unordered_map<autograd::Variable*, std::unordered_map<std::string, Tensor<float>>> state_;
-};
-
-// SGD with momentum
-struct SGDOptions : OptimizerOptions {
-    float momentum = 0.0;
-    bool nesterov = false;
-};
-
-class SGD : public Optimizer {
-public:
-    SGD(std::vector<autograd::Variable*> params, SGDOptions options = {});
-    void step() override;
-
-private:
-    SGDOptions options_;
-};
-
-// Adam / AdamW
-struct AdamOptions : OptimizerOptions {
-    float beta1 = 0.9;
-    float beta2 = 0.999;
-    float eps = 1e-8;
-    bool amsgrad = false;
-};
-
-class Adam : public Optimizer {
-public:
-    Adam(std::vector<autograd::Variable*> params, AdamOptions options = {});
-    void step() override;
-
-private:
-    AdamOptions options_;
-    int step_count_ = 0;
-};
-
-class AdamW : public Adam {
-public:
-    AdamW(std::vector<autograd::Variable*> params, AdamOptions options = {});
-    void step() override;
-};
-
-// Learning rate schedulers
-class LRScheduler {
-public:
-    explicit LRScheduler(Optimizer& optimizer);
-    virtual ~LRScheduler() = default;
-
-    virtual void step() = 0;
-    float get_last_lr() const;
-
-protected:
-    Optimizer& optimizer_;
-    int step_count_ = 0;
-    float last_lr_;
-};
-
-class CosineAnnealingLR : public LRScheduler {
-public:
-    CosineAnnealingLR(Optimizer& optimizer, int T_max, float eta_min = 0.0);
-    void step() override;
-
-private:
-    int T_max_;
-    float eta_min_;
-    float base_lr_;
-};
-
-class WarmupLR : public LRScheduler {
-public:
-    WarmupLR(Optimizer& optimizer, int warmup_steps, float start_factor = 0.0);
-    void step() override;
-
-private:
-    int warmup_steps_;
-    float start_factor_;
-    float base_lr_;
-};
-
-}  // namespace lightwatch::optim
-```
+| Contract File | Defined By | Key Types | Spec File |
+|---------------|------------|-----------|-----------|
+| `docs/contracts/tensor.hpp` | Phase 03 | Shape, Tensor<T>, matmul, concat, stack | `tensor.hpp.spec` |
+| `docs/contracts/autograd.hpp` | Phase 05 | Variable, Function, ops namespace | `autograd.hpp.spec` |
+| `docs/contracts/tokenizer.hpp` | Phase 06-07 | TokenId, Vocabulary, BPETokenizer | `tokenizer.hpp.spec` |
+| `docs/contracts/module.hpp` | Phase 11 | Module, Linear, LayerNorm, Embedding, Dropout | `module.hpp.spec` |
+| `docs/contracts/optimizer.hpp` | Phase 22 | Optimizer, SGD, Adam, AdamW, LRScheduler | `optimizer.hpp.spec` |
+
+### Contract Specifications
+
+Full contract specifications are in `docs/contracts/*.hpp.spec` files. During Phase 0.3:
+1. Read each `.spec` file
+2. Create the corresponding `.hpp` file with exact signatures
+3. Add header comment with defined-by/consumers info
+
+### Key Design Decisions (apply to all contracts)
+- **Namespace:** `lightwatch` (sub-namespaces: `autograd`, `tokenizer`, `nn`, `optim`)
+- **Memory:** Row-major layout, `std::shared_ptr<T[]>` for data
+- **Style:** Return new objects for const methods, reference for in-place (`_` suffix)
 
 ### Acceptance Criteria
 - [ ] `test -f docs/contracts/tensor.hpp`
@@ -1883,133 +1276,21 @@ Each phase must include specific test cases. The prompt's "Required Tests" secti
 
 See `docs/test_specs/README.md` for usage instructions.
 
-### Core Test Cases by Phase (Summary)
+### Test Naming Convention
 
-#### Phase 03: Tensor (HIGH complexity - 12 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_phase_03_tensor_construction` | `Shape{2,3,4}` | `numel()==24`, `ndim()==3` |
-| `test_phase_03_tensor_zeros` | `Shape{3,3}` | All elements == 0.0 |
-| `test_phase_03_tensor_ones` | `Shape{2,2}` | All elements == 1.0 |
-| `test_phase_03_tensor_randn` | `Shape{100}` | Mean ≈ 0.0 (±0.3), Std ≈ 1.0 (±0.3) |
-| `test_phase_03_tensor_matmul_2d` | `A[2,3] @ B[3,4]` | Result shape `[2,4]`, values correct |
-| `test_phase_03_tensor_matmul_batch` | `A[5,2,3] @ B[5,3,4]` | Result shape `[5,2,4]` |
-| `test_phase_03_tensor_broadcast_add` | `A[2,3] + B[3]` | Result shape `[2,3]`, values correct |
-| `test_phase_03_tensor_broadcast_mul` | `A[2,3,4] * B[1,4]` | Result shape `[2,3,4]` |
-| `test_phase_03_tensor_slice` | `T[10,20].slice(0,2,5)` | Result shape `[3,20]` |
-| `test_phase_03_tensor_transpose` | `T[2,3].transpose(0,1)` | Result shape `[3,2]` |
-| `test_phase_03_tensor_contiguous` | Non-contiguous slice | `is_contiguous()==true` after `.contiguous()` |
-| `test_phase_03_tensor_reduction_sum` | `T[2,3].sum(1)` | Result shape `[2]`, values correct |
+All tests MUST follow this format: `test_phase_XX_<component>_<behavior>`
 
-#### Phase 04: SIMD Operations (HIGH complexity - 6 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_phase_04_simd_add` | `A[1024], B[1024]` | Element-wise sum matches scalar |
-| `test_phase_04_simd_mul` | `A[1024], B[1024]` | Element-wise product matches scalar |
-| `test_phase_04_simd_dot` | `A[1024], B[1024]` | Dot product matches scalar (tol 1e-5) |
-| `test_phase_04_simd_matmul` | `A[64,64] @ B[64,64]` | Matches scalar implementation |
-| `test_phase_04_simd_exp` | `A[1024]` in range [-5,5] | Matches std::exp (tol 1e-5) |
-| `test_phase_04_simd_alignment` | Unaligned data | No crash, correct results |
+Example: `test_phase_03_tensor_matmul_2d`
 
-#### Phase 05: Autograd (HIGH complexity - 10 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_phase_05_autograd_add` | `c = a + b; c.backward()` | `a.grad == 1`, `b.grad == 1` |
-| `test_phase_05_autograd_mul` | `c = a * b; c.backward()` | `a.grad == b.data`, `b.grad == a.data` |
-| `test_phase_05_autograd_matmul` | `C = A @ B; C.sum().backward()` | Gradients match numerical diff (tol 1e-5) |
-| `test_phase_05_autograd_chain` | `d = relu(a @ b + c)` | All gradients computed |
-| `test_phase_05_autograd_no_grad` | `requires_grad=false` | `has_grad()==false` |
-| `test_phase_05_autograd_accumulation` | Two backward passes | Gradients sum |
-| `test_phase_05_autograd_detach` | `b = a.detach()` | `b.grad_fn() == nullptr` |
-| `test_phase_05_autograd_relu_grad` | `y = relu(x); y.backward()` | grad = 1 if x > 0, else 0 |
-| `test_phase_05_autograd_softmax_grad` | `y = softmax(x); y.backward()` | Jacobian matches numerical diff |
-| `test_phase_05_autograd_no_grad_guard` | Inside NoGradGuard | No graph built |
+This enables phase-specific filtering: `ctest -R "phase_03"`
 
-#### Phase 06: Tokenizer (MEDIUM complexity - 10 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_phase_06_tokenizer_roundtrip` | `"Hello, world!"` | `decode(encode(x)) == x` |
-| `test_phase_06_tokenizer_special` | EOS token | ID == 50256 |
-| `test_phase_06_tokenizer_unicode` | `"日本語"` | No crash, tokens produced |
-| `test_phase_06_tokenizer_empty` | `""` | Returns empty vector |
-| `test_phase_06_tokenizer_vocab_size` | Load GPT-2 vocab | `vocab_size() == 50257` |
-| `test_phase_06_tokenizer_whitespace` | `"  leading and trailing  "` | Roundtrip exact match |
-| `test_phase_06_tokenizer_numbers` | `"12345"` | Tokenizes correctly |
-| `test_phase_06_tokenizer_long_text` | 2000 random tokens | No crash, valid IDs |
-| `test_phase_06_tokenizer_emoji` | `"Hello 🌍 World"` | Roundtrip preserves emoji |
-| `test_phase_06_tokenizer_newlines` | `"line1\nline2\r\nline3"` | Roundtrip exact match |
+### Minimum Test Requirements
 
-#### Phase 15: Attention (HIGH complexity - 8 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_attention_shape` | `Q,K,V [B,H,S,D]` | Output `[B,H,S,D]` |
-| `test_attention_causal` | Position i query | Weights 0 for j > i |
-| `test_attention_softmax` | Any input | Weights sum to 1.0 per query |
-| `test_attention_gradient` | Backward pass | Matches numerical gradient (tol 1e-4) |
-| `test_attention_scale` | `d_k=64` | Scaled by `1/sqrt(64)` |
-| `test_attention_mask_inf` | Masked positions | Output unaffected by masked values |
-| `test_attention_single_token` | `S=1` | No crash, correct output |
-| `test_attention_long_sequence` | `S=1024` | Memory efficient, no OOM |
-
-#### Phase 16: Multi-Head Attention (MEDIUM complexity - 6 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_mha_shape` | `x [B,S,D]`, 12 heads | Output `[B,S,D]` |
-| `test_mha_head_split` | 12 heads, D=768 | Each head gets 64 dims |
-| `test_mha_projection` | Input/output | Wq, Wk, Wv, Wo correctly sized |
-| `test_mha_gradient` | Full backward | All projections have gradients |
-| `test_mha_causal` | Decoder attention | Causal mask applied |
-| `test_mha_cross_attention` | Encoder-decoder | Cross-attention works |
-
-#### Phase 19: Transformer Decoder (MEDIUM complexity - 5 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_decoder_block_shape` | `x [B,S,D]` | Output `[B,S,D]` |
-| `test_decoder_block_causal` | Full sequence | Position i uses only 0..i |
-| `test_decoder_block_gradient` | Backward pass | All parameters have gradients |
-| `test_decoder_residual` | Skip connections | Output = input + sublayer(input) |
-| `test_decoder_prenorm` | LayerNorm position | Applied before attention/FFN |
-
-#### Phase 29: Training Loop (HIGH complexity - 6 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_training_overfit` | 10 samples, 1000 epochs | Loss < 0.01 |
-| `test_training_gradient_clip` | Large gradients | Norm <= clip_value |
-| `test_training_lr_schedule` | Warmup + cosine | LR follows schedule |
-| `test_training_checkpoint` | Save/load mid-training | Training resumes correctly |
-| `test_training_loss_decreases` | 100 steps | Loss at step 100 < loss at step 1 |
-| `test_training_nan_detection` | Bad learning rate | NaN detected and reported |
-
-#### Phase 31: GPT Architecture (HIGH complexity - 6 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_gpt_forward_shape` | `[B, S]` input | Output `[B, S, V]` |
-| `test_gpt_causal` | Sequence | Position i output depends only on 0..i |
-| `test_gpt_parameter_count` | GPT-2 Small config | ~124M parameters (±5%) |
-| `test_gpt_gradient` | Full backward | All parameters have gradients |
-| `test_gpt_embedding_tied` | wte and lm_head | Share same weight matrix |
-| `test_gpt_layer_order` | 12 layers | Layers execute in correct order |
-
-#### Phase 36: KV-Cache (HIGH complexity - 5 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_kv_cache_incremental` | Generate 10 tokens | Same result as full recompute |
-| `test_kv_cache_shape` | After 5 tokens | Cache shape `[B, H, 5, D]` |
-| `test_kv_cache_reset` | New sequence | Cache cleared |
-| `test_kv_cache_memory` | 1024 tokens | Memory ~75MB per batch |
-| `test_kv_cache_speedup` | Cached vs uncached | Cached ≥2x faster |
-
-#### Phase 38: CLI/REPL (MEDIUM complexity - 8 test cases required)
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_cli_generate_basic` | `--prompt "Hello"` | Non-empty output, exit 0 |
-| `test_cli_generate_json` | `--prompt "Hi" --json` | Valid JSON with required fields |
-| `test_cli_benchmark_json` | `benchmark --json` | Valid JSON with tokens_per_second |
-| `test_cli_json_schema` | `--json` output | Contains: command, prompt_tokens, tokens_per_second |
-| `test_cli_help` | `--help` | Shows usage, exit 0 |
-| `test_cli_invalid_flag` | `--invalid` | Error message, exit non-zero |
-| `test_cli_max_tokens` | `--max-tokens 10` | Output ≤ 10 tokens |
-| `test_cli_seed` | `--seed 42` twice | Same output both times |
+| Complexity | Minimum Tests |
+|------------|---------------|
+| HIGH | ≥6 tests |
+| MEDIUM | ≥4 tests |
+| LOW | ≥2 tests |
 
 ---
 
@@ -2127,226 +1408,21 @@ python3 scripts/validate_prompts.py
 ```
 
 ### scripts/validate_prompts.py
-```python
-#!/usr/bin/env python3
-"""
-Validates all 40 phase prompts for consistency.
-Exit 0 = valid, Exit 1 = errors found.
-"""
 
-import sys
-import re
-import shutil
-from pathlib import Path
+Validates all 40 phase prompts for consistency. Full script: `scripts/validate_prompts.py.template`
 
-# Check dependencies first
-def check_dependencies():
-    """Verify required tools are available."""
-    required = ['jq']
-    for tool in required:
-        if not shutil.which(tool):
-            print(f"ERROR: Required tool '{tool}' not found", file=sys.stderr)
-            sys.exit(1)
+**Key validations:**
+- All 40 prompt files exist (`docs/prompts/phase-XX-*.md`)
+- Prerequisites match `PHASE_DEPS` dictionary
+- Required sections present: Objective, Prerequisites, Inputs, Outputs, Specification, Required Tests, Acceptance Criteria
+- Acceptance criteria use valid command prefixes
+- Minimum test counts for complex phases (03: 10, 04: 5, 05: 8, etc.)
+- Test spec files exist in `docs/test_specs/`
 
-check_dependencies()
-
-PHASE_DEPS = {
-    1: [], 2: [1], 3: [2], 4: [3], 5: [3,4],
-    6: [1,2], 7: [6], 8: [3,7], 9: [3], 10: list(range(1,10)),
-    11: [5], 12: [11], 13: [11], 14: [11], 15: [11,12,13,14],
-    16: [15], 17: [11,12,13,14], 18: [16,17], 19: [16,17], 20: list(range(11,20)),
-    21: [12,13], 22: [5], 23: [22], 24: [22], 25: [5],
-    26: [5], 27: [7], 28: [27], 29: [21,23,24,25,26,28], 30: list(range(21,30)),
-    31: [19,20], 32: [31], 33: [31], 34: [31], 35: [34],
-    36: [35], 37: [31], 38: [31,35,37], 39: [38], 40: list(range(1,40))
-}
-
-REQUIRED_SECTIONS = [
-    'Objective',
-    'Prerequisites',
-    'Inputs',
-    'Outputs',
-    'Specification',
-    'Required Tests',
-    'Acceptance Criteria',
-    'Estimated Scope'
-]
-
-# Minimum test counts for HIGH/MEDIUM complexity phases
-MIN_TESTS = {
-    3: 10, 4: 5, 5: 8, 6: 6, 15: 6, 16: 4, 19: 4, 29: 4, 31: 4, 36: 4, 38: 6
-}
-
-def find_prompt(phase_num: int) -> Path | None:
-    """Find the prompt file for a given phase number."""
-    matches = list(Path("docs/prompts").glob(f"phase-{phase_num:02d}-*.md"))
-    return matches[0] if matches else None
-
-def extract_prerequisites(content: str) -> list[int]:
-    """Extract phase numbers from Prerequisites table."""
-    prereq_section = re.search(r'## Prerequisites\s*\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
-    if not prereq_section:
-        return []
-
-    phases = []
-    for match in re.finditer(r'\|\s*(\d{1,2})\s*\|', prereq_section.group(1)):
-        phases.append(int(match.group(1)))
-    return phases
-
-def extract_sections(content: str) -> dict[str, str]:
-    """Extract major sections from prompt."""
-    sections = {}
-    current = None
-    lines = []
-
-    for line in content.split('\n'):
-        if line.startswith('## '):
-            if current:
-                sections[current] = '\n'.join(lines)
-            current = line[3:].strip()
-            lines = []
-        else:
-            lines.append(line)
-
-    if current:
-        sections[current] = '\n'.join(lines)
-    return sections
-
-def count_test_rows(content: str) -> int:
-    """Count test rows in Required Tests table."""
-    tests_section = re.search(r'## Required Tests\s*\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
-    if not tests_section:
-        return 0
-
-    # Count table rows (lines starting with |, excluding header and separator)
-    rows = [l for l in tests_section.group(1).split('\n')
-            if l.strip().startswith('|') and not l.strip().startswith('|---')]
-    return max(0, len(rows) - 1)  # Subtract header row
-
-def validate_acceptance_criteria(content: str) -> list[str]:
-    """Check that acceptance criteria are executable commands."""
-    errors = []
-    valid_prefixes = [
-        'cmake', 'ctest', 'test', './build', 'grep', 'wc',
-        'jq', 'valgrind', 'python3', 'bash', 'diff'
-    ]
-
-    for match in re.finditer(r'- \[ \] `([^`]+)`', content):
-        cmd = match.group(1)
-        first_word = cmd.split()[0]
-
-        if not any(first_word.startswith(v) for v in valid_prefixes):
-            if not first_word.startswith('./'):
-                errors.append(f"Unknown command prefix: {cmd[:50]}...")
-
-    return errors
-
-def validate_required_tests(content: str) -> list[str]:
-    """Check that Required Tests section has proper table format."""
-    errors = []
-    tests_section = re.search(r'## Required Tests\s*\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
-
-    if not tests_section:
-        errors.append("Missing 'Required Tests' section")
-        return errors
-
-    table_match = re.search(r'\|.*\|.*\|.*\|', tests_section.group(1))
-    if not table_match:
-        errors.append("Required Tests section missing table format")
-
-    return errors
-
-def validate_test_specs() -> list[str]:
-    """Check that all referenced test_specs files exist."""
-    errors = []
-    test_specs_dir = Path("docs/test_specs")
-
-    # Phases that should have external test specs
-    PHASES_WITH_SPECS = [3, 4, 5, 6, 15, 16, 19, 29, 31, 36, 38]
-
-    if not test_specs_dir.exists():
-        errors.append("docs/test_specs directory does not exist")
-        return errors
-
-    for phase in PHASES_WITH_SPECS:
-        pattern = f"phase-{phase:02d}-*.md"
-        matches = list(test_specs_dir.glob(pattern))
-        if not matches:
-            errors.append(f"Missing test spec file: docs/test_specs/phase-{phase:02d}-*.md")
-        elif len(matches) > 1:
-            errors.append(f"Multiple test spec files for phase {phase}: {[m.name for m in matches]}")
-
-    return errors
-
-def main():
-    errors = []
-    prompts_dir = Path("docs/prompts")
-
-    if not prompts_dir.exists():
-        print("ERROR: docs/prompts directory does not exist", file=sys.stderr)
-        sys.exit(1)
-
-    # Check all files exist
-    for i in range(1, 41):
-        path = find_prompt(i)
-        if not path:
-            errors.append(f"Phase {i:02d}: Prompt file missing")
-            continue
-
-        content = path.read_text()
-
-        # Check prerequisites match PHASE_DEPS
-        prereqs = set(extract_prerequisites(content))
-        expected = set(PHASE_DEPS[i])
-        if prereqs != expected:
-            missing = expected - prereqs
-            extra = prereqs - expected
-            if missing:
-                errors.append(f"Phase {i:02d}: Missing prerequisites {sorted(missing)}")
-            if extra:
-                errors.append(f"Phase {i:02d}: Extra prerequisites {sorted(extra)}")
-
-        # Check required sections exist
-        sections = extract_sections(content)
-        for sec in REQUIRED_SECTIONS:
-            found = sec in sections or any(sec.lower() in s.lower() for s in sections)
-            if not found:
-                errors.append(f"Phase {i:02d}: Missing section '{sec}'")
-
-        # Check acceptance criteria are executable
-        cmd_errors = validate_acceptance_criteria(content)
-        for e in cmd_errors:
-            errors.append(f"Phase {i:02d}: {e}")
-
-        # Check Required Tests format
-        test_errors = validate_required_tests(content)
-        for e in test_errors:
-            errors.append(f"Phase {i:02d}: {e}")
-
-        # Check minimum test count for complex phases
-        if i in MIN_TESTS:
-            test_count = count_test_rows(content)
-            if test_count < MIN_TESTS[i]:
-                errors.append(f"Phase {i:02d}: Has {test_count} tests, requires ≥{MIN_TESTS[i]}")
-
-    # Check test spec files exist
-    spec_errors = validate_test_specs()
-    for e in spec_errors:
-        errors.append(f"Test specs: {e}")
-
-    # Report results
-    if errors:
-        print("VALIDATION FAILED", file=sys.stderr)
-        for e in sorted(errors):
-            print(f"  ERROR: {e}", file=sys.stderr)
-        print(f"\n{len(errors)} errors found.", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Validation passed: 40 prompts verified")
-    sys.exit(0)
-
-if __name__ == "__main__":
-    main()
+**Usage:**
+```bash
+python3 scripts/validate_prompts.py
+# Exit 0 = all valid, Exit 1 = errors found
 ```
 
 **IF VALIDATION FAILS:** Fix the indicated prompts and re-run. Do NOT proceed to implementation.
@@ -2468,11 +1544,12 @@ These are shell commands that MUST exit 0. Run them ALL before considering the p
      * Add N to completed_phases
      * phase_status="COMPLETE"
      * Clear pending_deliverables
+     * Update last_commit with new HEAD
      * If checkpoint: add to checkpoints_passed
+   - Remove lock file: `rm -f .lightwatch.lock`
    - git checkout main
    - git merge phase-{N:02d}-{slug} --no-ff
    - git push origin main (if remote exists)
-   - Remove lock file: `rm -f .lightwatch.lock`
 
 8. COMMIT STATE
    - git add .lightwatch_state.json
@@ -2542,30 +1619,40 @@ git push origin main 2>&1 | tee /tmp/push_error.txt
 
 ### 3. Retry Logic
 ```bash
-MAX_RETRIES=3
-RETRY_DELAY=10
+push_with_retry() {
+    local max_attempts=3
+    local attempt=1
 
-for i in $(seq 1 $MAX_RETRIES); do
-    if git push origin main; then
-        echo "Push successful on attempt $i"
-        break
-    fi
-    if [ $i -eq $MAX_RETRIES ]; then
-        echo "Push failed after $MAX_RETRIES attempts"
-        # Escalate
-    fi
-    echo "Retry $i/$MAX_RETRIES in ${RETRY_DELAY}s..."
-    sleep $RETRY_DELAY
-done
+    while [ $attempt -le $max_attempts ]; do
+        echo "Push attempt $attempt/$max_attempts..."
+        if git push origin main 2>&1; then
+            echo "Push succeeded"
+            return 0
+        fi
+
+        echo "Push failed, waiting 60s before retry..."
+        sleep 60
+        attempt=$((attempt + 1))
+    done
+
+    echo "ERROR: Push failed after $max_attempts attempts"
+    return 1
+}
 ```
 
 ### 4. Escalation
-If push fails after 3 retries:
-1. Document in `docs/architecture/ESCALATIONS.md`
+If push fails after 3 retries OR encounters auth error:
+1. Document error in `docs/architecture/ESCALATIONS.md`
 2. Include full error text from `/tmp/push_error.txt`
-3. Set `project_status = "ESCALATED"`
-4. Continue local development (commits are preserved)
-5. Wait for human to resolve auth/permission issue
+3. Set `project_status = "ESCALATED"` in state file
+4. Commit state locally (it won't push, but preserves progress)
+5. **STOP** and wait for human to fix auth/network
+
+### 5. Local Progress is NOT Lost
+All commits exist locally. Once push access is restored:
+```bash
+git push origin main  # Will push all pending commits
+```
 
 > **Note:** Git push failures do NOT block local phase completion. The phase is complete when code is committed locally. Push is for backup/sync only.
 
@@ -2921,124 +2008,25 @@ Stop execution and request human input if ANY of these conditions occur:
 The project is complete when ALL of the following commands exit 0:
 
 ### scripts/verify_complete.sh
+
+Final verification that project is complete. Full script: `scripts/verify_complete.sh.template`
+
+**Checks (all must pass):**
+1. Build with strict warnings (`-Wall -Werror -Wextra`)
+2. All tests pass (`ctest`)
+3. Generation produces valid output (≥5 words from "The")
+4. Performance ≥50 tok/s
+5. No memory leaks (valgrind, if available)
+6. Memory usage <2GB
+7. State file shows 40/40 phases complete
+8. Documentation exists (README.md, DECISIONS.md)
+
+**Usage:**
 ```bash
-#!/bin/bash
-set -e
-
-echo "=== LightwatchAI2 Completion Verification ==="
-
-# Check required tools
-echo "Checking required tools..."
-check_tool() {
-    if ! command -v "$1" &> /dev/null; then
-        echo "ERROR: Required tool '$1' not found"
-        exit 1
-    fi
-}
-
-check_tool cmake
-check_tool jq
-check_tool curl
-
-# Optional tools (warn but don't fail)
-SKIP_VALGRIND=0
-if ! command -v valgrind &> /dev/null; then
-    echo "WARNING: valgrind not found, memory checks will be skipped"
-    SKIP_VALGRIND=1
-fi
-
-echo "All required tools present"
-echo ""
-
-# 1. Build succeeds with strict warnings
-echo "[1/7] Building with strict warnings..."
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wall -Werror -Wextra"
-cmake --build build --parallel
-
-# 2. All tests pass
-echo "[2/7] Running tests..."
-ctest --test-dir build --output-on-failure
-
-# 3. Generation produces valid output
-echo "[3/7] Testing generation..."
-./build/bin/lightwatch generate --prompt "The" --max-tokens 20 --seed 42 > /tmp/gen.txt
-test -s /tmp/gen.txt  # File is non-empty
-WORDS=$(wc -w < /tmp/gen.txt)
-if [ "$WORDS" -lt 5 ]; then
-    echo "ERROR: Generated only $WORDS words, expected >= 5"
-    exit 1
-fi
-echo "Generated: $(cat /tmp/gen.txt)"
-
-# 4. Performance meets minimum threshold
-echo "[4/7] Running benchmark..."
-./build/bin/lightwatch benchmark --iterations 100 --json > /tmp/bench.json
-TPS=$(jq '.tokens_per_second' /tmp/bench.json)
-if ! jq -e '.tokens_per_second > 50' /tmp/bench.json > /dev/null; then
-    echo "ERROR: Performance $TPS tok/s below 50 tok/s threshold"
-    exit 1
-fi
-echo "Performance: $TPS tokens/second"
-
-# 5. Memory leak check (skip if valgrind unavailable)
-echo "[5/8] Checking memory leaks..."
-if [ "$SKIP_VALGRIND" -eq 0 ]; then
-    valgrind --leak-check=full --error-exitcode=1 \
-        ./build/bin/lightwatch generate --prompt "Test" --max-tokens 10 2>&1 | tail -20
-    echo "Memory leak check passed"
-else
-    echo "Valgrind not available, skipping memory leak check"
-fi
-
-# 6. Memory budget check (model should use < 2GB)
-echo "[6/8] Checking memory budget..."
-MAX_RSS_KB=2097152  # 2GB in KB
-if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    MEMORY_OUTPUT=$(/usr/bin/time -v ./build/bin/lightwatch generate --prompt "Test" --max-tokens 100 2>&1)
-    MAX_RSS=$(echo "$MEMORY_OUTPUT" | grep "Maximum resident set size" | awk '{print $6}')
-    if [ -n "$MAX_RSS" ] && [ "$MAX_RSS" -gt "$MAX_RSS_KB" ]; then
-        echo "ERROR: Memory usage ${MAX_RSS}KB exceeds 2GB limit"
-        exit 1
-    fi
-    echo "Memory usage: ${MAX_RSS}KB (limit: ${MAX_RSS_KB}KB)"
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS: /usr/bin/time -l reports bytes
-    MEMORY_OUTPUT=$(/usr/bin/time -l ./build/bin/lightwatch generate --prompt "Test" --max-tokens 100 2>&1)
-    MAX_RSS_BYTES=$(echo "$MEMORY_OUTPUT" | grep "maximum resident set size" | awk '{print $1}')
-    MAX_RSS=$((MAX_RSS_BYTES / 1024))
-    if [ -n "$MAX_RSS" ] && [ "$MAX_RSS" -gt "$MAX_RSS_KB" ]; then
-        echo "ERROR: Memory usage ${MAX_RSS}KB exceeds 2GB limit"
-        exit 1
-    fi
-    echo "Memory usage: ${MAX_RSS}KB (limit: ${MAX_RSS_KB}KB)"
-else
-    echo "Memory budget check skipped (unsupported platform)"
-fi
-
-# 7. State file shows all phases complete
-echo "[7/8] Checking state file..."
-COMPLETED=$(jq '.completed_phases | length' .lightwatch_state.json)
-if [ "$COMPLETED" -ne 40 ]; then
-    echo "ERROR: Only $COMPLETED/40 phases completed"
-    exit 1
-fi
-echo "All 40 phases completed"
-
-# 8. Documentation exists
-echo "[8/8] Checking documentation..."
-test -f README.md && test -s README.md
-test -f docs/architecture/DECISIONS.md
-
-echo ""
-echo "=== VERIFICATION PASSED ==="
-echo "LightwatchAI2 build is complete and functional."
-
-# Update project status
-jq '.project_status = "COMPLETE"' .lightwatch_state.json > tmp.json
-mv tmp.json .lightwatch_state.json
+chmod +x scripts/verify_complete.sh
+./scripts/verify_complete.sh
+# Exit 0 = COMPLETE, Exit 1 = failed
 ```
-
-Make executable: `chmod +x scripts/verify_complete.sh`
 
 ---
 
