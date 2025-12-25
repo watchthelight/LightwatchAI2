@@ -36,3 +36,8 @@ add_executable(test_vocabulary test_vocabulary.cpp)
 lightwatch_set_compiler_flags(test_vocabulary)
 add_test(NAME test_phase_07_vocabulary COMMAND test_vocabulary)
 set_tests_properties(test_phase_07_vocabulary PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# Phase 08: Embedding layer tests
+add_executable(test_embedding test_embedding.cpp)
+lightwatch_set_compiler_flags(test_embedding)
+add_test(NAME test_phase_08_embedding COMMAND test_embedding)
