@@ -41,3 +41,8 @@ set_tests_properties(test_phase_07_vocabulary PROPERTIES WORKING_DIRECTORY ${CMA
 add_executable(test_embedding test_embedding.cpp)
 lightwatch_set_compiler_flags(test_embedding)
 add_test(NAME test_phase_08_embedding COMMAND test_embedding)
+
+# Phase 09: Positional encoding tests
+add_executable(test_positional test_positional.cpp)
+lightwatch_set_compiler_flags(test_positional)
+add_test(NAME test_phase_09_positional COMMAND test_positional)

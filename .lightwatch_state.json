@@ -1,10 +1,10 @@
 {
   "project_status": "IN_PROGRESS",
   "generation_complete": true,
-  "current_phase": 9,
+  "current_phase": 10,
   "phase_status": "NOT_STARTED",
   "current_branch": "main",
-  "completed_phases": [0, 0.3, 0.5, 0.7, 0.9, 1, 2, 3, 4, 5, 6, 7, 8],
+  "completed_phases": [0, 0.3, 0.5, 0.7, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9],
   "failed_phases": [],
   "completed_deliverables": [
     "tests/smoke/smoke_test.cpp",
@@ -22,7 +22,8 @@
     "include/lightwatch/tokenizer/bpe.hpp",
     "include/lightwatch/tokenizer/vocabulary.hpp",
     "include/lightwatch/nn/module.hpp",
-    "include/lightwatch/nn/embedding.hpp"
+    "include/lightwatch/nn/embedding.hpp",
+    "include/lightwatch/nn/positional.hpp"
   ],
   "pending_deliverables": [],
   "last_commit": "",
