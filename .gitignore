@@ -1,0 +1,45 @@
+# Build directories
+build/
+cmake-build-*/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled objects
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+# Session lock
+.lightwatch.lock
+
+# Large binary files (if weights are downloaded)
+data/weights/*.bin
+data/weights/*.pt
+data/weights/*.safetensors
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
