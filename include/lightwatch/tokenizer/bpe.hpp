@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <lightwatch/tokenizer/vocabulary.hpp>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -16,98 +17,6 @@
 #include <limits>
 
 namespace lightwatch::tokenizer {
-
-using TokenId = int32_t;
-
-// GPT-2 special token IDs
-struct SpecialTokens {
-    static constexpr TokenId PAD = 50256;
-    static constexpr TokenId UNK = 50256;
-    static constexpr TokenId BOS = 50256;
-    static constexpr TokenId EOS = 50256;
-};
-
-// Vocabulary class for token-id mapping
-class Vocabulary {
-public:
-    Vocabulary() = default;
-
-    TokenId add_token(const std::string& token) {
-        auto it = token_to_id_.find(token);
-        if (it != token_to_id_.end()) {
-            return it->second;
-        }
-        TokenId id = static_cast<TokenId>(id_to_token_.size());
-        token_to_id_[token] = id;
-        id_to_token_.push_back(token);
-        return id;
-    }
-
-    TokenId token_to_id(const std::string& token) const {
-        auto it = token_to_id_.find(token);
-        if (it == token_to_id_.end()) {
-            return SpecialTokens::UNK;
-        }
-        return it->second;
-    }
-
-    std::string id_to_token(TokenId id) const {
-        if (id < 0 || static_cast<size_t>(id) >= id_to_token_.size()) {
-            return "";
-        }
-        return id_to_token_[static_cast<size_t>(id)];
-    }
-
-    bool contains(const std::string& token) const {
-        return token_to_id_.find(token) != token_to_id_.end();
-    }
-
-    bool contains(TokenId id) const {
-        return id >= 0 && static_cast<size_t>(id) < id_to_token_.size();
-    }
-
-    size_t size() const {
-        return id_to_token_.size();
-    }
-
-    TokenId pad_id() const { return SpecialTokens::PAD; }
-    TokenId eos_id() const { return SpecialTokens::EOS; }
-
-    bool is_special_token(TokenId id) const {
-        return id == SpecialTokens::EOS;
-    }
-
-    void save(const std::string& path) const {
-        std::ofstream file(path);
-        if (!file) {
-            throw std::runtime_error("Cannot open file for writing: " + path);
-        }
-        for (const auto& token : id_to_token_) {
-            file << token << "\n";
-        }
-    }
-
-    static Vocabulary load(const std::string& path) {
-        Vocabulary vocab;
-        std::ifstream file(path);
-        if (!file) {
-            throw std::runtime_error("Cannot open file for reading: " + path);
-        }
-        std::string line;
-        while (std::getline(file, line)) {
-            vocab.add_token(line);
-        }
-        return vocab;
-    }
-
-    static Vocabulary from_encoder_json(const std::string& path);
-
-private:
-    std::unordered_map<std::string, TokenId> token_to_id_;
-    std::vector<std::string> id_to_token_;
-
-    friend class BPETokenizer;
-};
 
 class BPETokenizer {
 public:
@@ -205,8 +114,9 @@ public:
         // Save vocab size
         file << vocab_.size() << "\n";
         // Save tokens
-        for (size_t i = 0; i < vocab_.id_to_token_.size(); ++i) {
-            file << vocab_.id_to_token_[i] << "\n";
+        const auto& id_map = vocab_.id_map();
+        for (size_t i = 0; i < id_map.size(); ++i) {
+            file << id_map[i] << "\n";
         }
         // Save merges size
         file << merges_.size() << "\n";
@@ -523,106 +433,6 @@ private:
         return word;
     }
 };
-
-// Implementation of from_encoder_json
-inline Vocabulary Vocabulary::from_encoder_json(const std::string& path) {
-    Vocabulary vocab;
-    std::ifstream file(path);
-    if (!file) {
-        throw std::runtime_error("Cannot open encoder.json: " + path);
-    }
-
-    // Simple JSON parsing for encoder.json format {"token": id, ...}
-    std::string content((std::istreambuf_iterator<char>(file)),
-                        std::istreambuf_iterator<char>());
-
-    // Parse JSON manually (simple approach for this specific format)
-    std::vector<std::pair<std::string, TokenId>> entries;
-
-    size_t pos = content.find('{');
-    if (pos == std::string::npos) {
-        throw std::runtime_error("Invalid encoder.json format");
-    }
-    pos++;
-
-    while (pos < content.size()) {
-        // Skip whitespace
-        while (pos < content.size() && std::isspace(content[pos])) pos++;
-
-        if (content[pos] == '}') break;
-
-        // Parse key (token string)
-        if (content[pos] != '"') {
-            throw std::runtime_error("Expected '\"' in encoder.json");
-        }
-        pos++;
-
-        std::string token;
-        while (pos < content.size() && content[pos] != '"') {
-            if (content[pos] == '\\' && pos + 1 < content.size()) {
-                pos++;
-                switch (content[pos]) {
-                    case 'n': token += '\n'; break;
-                    case 'r': token += '\r'; break;
-                    case 't': token += '\t'; break;
-                    case '\\': token += '\\'; break;
-                    case '"': token += '"'; break;
-                    case 'u': {
-                        // Unicode escape \uXXXX
-                        if (pos + 4 < content.size()) {
-                            std::string hex = content.substr(pos + 1, 4);
-                            int codepoint = std::stoi(hex, nullptr, 16);
-                            // Encode as UTF-8
-                            if (codepoint < 0x80) {
-                                token += static_cast<char>(codepoint);
-                            } else if (codepoint < 0x800) {
-                                token += static_cast<char>(0xC0 | (codepoint >> 6));
-                                token += static_cast<char>(0x80 | (codepoint & 0x3F));
-                            } else {
-                                token += static_cast<char>(0xE0 | (codepoint >> 12));
-                                token += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-                                token += static_cast<char>(0x80 | (codepoint & 0x3F));
-                            }
-                            pos += 4;
-                        }
-                        break;
-                    }
-                    default: token += content[pos]; break;
-                }
-            } else {
-                token += content[pos];
-            }
-            pos++;
-        }
-        pos++; // Skip closing quote
-
-        // Skip colon
-        while (pos < content.size() && (std::isspace(content[pos]) || content[pos] == ':')) pos++;
-
-        // Parse value (token id)
-        std::string num_str;
-        while (pos < content.size() && (std::isdigit(content[pos]) || content[pos] == '-')) {
-            num_str += content[pos];
-            pos++;
-        }
-        TokenId id = static_cast<TokenId>(std::stoi(num_str));
-
-        entries.emplace_back(token, id);
-
-        // Skip comma and whitespace
-        while (pos < content.size() && (std::isspace(content[pos]) || content[pos] == ',')) pos++;
-    }
-
-    // Sort by id and add to vocabulary
-    std::sort(entries.begin(), entries.end(),
-              [](const auto& a, const auto& b) { return a.second < b.second; });
-
-    for (const auto& entry : entries) {
-        vocab.add_token(entry.first);
-    }
-
-    return vocab;
-}
 
 // Implementation of from_files
 inline BPETokenizer BPETokenizer::from_files(
