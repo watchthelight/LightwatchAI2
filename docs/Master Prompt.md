@@ -26,10 +26,15 @@ git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com"
 - **FORBIDDEN:** Eigen, OpenBLAS, BLAS, LAPACK, any ML framework
 
 ### Performance Target
-- Inference: >100 tokens/second on modern CPU (with SIMD)
-- If AVX2 implementation achieves >50 tok/s → proceed
-- If <50 tok/s → document bottleneck, add OPTIONAL OpenBLAS path behind compile flag
-- External BLAS must NEVER be required
+
+| Performance | Status | Action |
+|-------------|--------|--------|
+| ≥100 tok/s | EXCELLENT | Proceed, no action needed |
+| 50-99 tok/s | PASS | Proceed, document in DECISIONS.md |
+| 25-49 tok/s | MARGINAL | Document bottleneck, add OPTIONAL `-DLIGHTWATCH_USE_BLAS=ON` path, proceed |
+| <25 tok/s | FAIL | **ESCALATION TRIGGER** — stop and request human input |
+
+External BLAS must NEVER be required for the default build.
 
 ---
 
@@ -55,6 +60,35 @@ The serialization format (Phase 37) must be compatible with HuggingFace GPT-2 we
 1. Validation against reference implementation
 2. Inference without training
 3. Fine-tuning from pretrained weights
+
+#### Native Format: `.lwbin`
+
+```
+HEADER (64 bytes):
+  - Magic: "LWAI" (4 bytes)
+  - Version: uint32_t (4 bytes) - currently 1
+  - Tensor count: uint32_t (4 bytes)
+  - Reserved: 52 bytes (zero-filled)
+
+For each tensor:
+  - Name length: uint32_t
+  - Name: char[name_length] (UTF-8, no null terminator)
+  - Dtype: uint8_t (0=float32, 1=float16, 2=int32)
+  - Ndim: uint8_t
+  - Shape: int64_t[ndim]
+  - Data: dtype[prod(shape)] (little-endian)
+```
+
+**Conversion scripts** (created in Phase 37):
+- `scripts/convert_hf_to_lwbin.py` - HuggingFace `.bin` → `.lwbin`
+- `scripts/convert_lwbin_to_hf.py` - `.lwbin` → HuggingFace `.bin`
+- `scripts/validate_weights.py` - Verify weight compatibility
+
+**Weight loading policy:**
+- Weights are NOT automatically downloaded during build
+- Tests use small random weights (seed 42 for reproducibility)
+- Full GPT-2 weights are optional for inference validation
+- Download command: `./build/bin/lightwatch download-weights --model gpt2`
 
 ### Memory Budget
 | Component | Size (fp32) |
@@ -190,13 +224,37 @@ FetchContent_MakeAvailable(<name>)
 
 **Session recovery checklist (run on every session start):**
 ```bash
-# 0. Check for concurrent execution (lock file)
-if [ -f .lightwatch.lock ]; then
-    echo "ERROR: Lock file exists. Another session may be running."
-    echo "If no other session is active, remove: rm .lightwatch.lock"
-    exit 1
+# 0. Check for concurrent execution (lock file with staleness detection)
+LOCK_FILE=".lightwatch.lock"
+STALE_HOURS=4  # Lock files older than 4 hours are considered stale
+
+if [ -f "$LOCK_FILE" ]; then
+    LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
+
+    # Check if PID is still running
+    if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+        echo "ERROR: Another session is actively running (PID $LOCK_PID)"
+        exit 1
+    fi
+
+    # Check lock file age (staleness detection)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        LOCK_AGE=$(( ($(date +%s) - $(stat -f %m "$LOCK_FILE")) / 3600 ))
+    else
+        LOCK_AGE=$(( ($(date +%s) - $(stat -c %Y "$LOCK_FILE")) / 3600 ))
+    fi
+
+    if [ "$LOCK_AGE" -ge "$STALE_HOURS" ]; then
+        echo "WARNING: Stale lock file detected (${LOCK_AGE}h old, PID $LOCK_PID not running)"
+        echo "Removing stale lock and continuing..."
+        rm -f "$LOCK_FILE"
+    else
+        echo "WARNING: Lock file exists (PID $LOCK_PID not running, ${LOCK_AGE}h old)"
+        echo "If certain no other session is active: rm $LOCK_FILE"
+        exit 1
+    fi
 fi
-echo $$ > .lightwatch.lock  # Create lock with PID
+echo $$ > "$LOCK_FILE"  # Create lock with current PID
 
 # 1. Check state file exists and is valid JSON
 jq . .lightwatch_state.json > /dev/null || echo "ERROR: Invalid state file"
@@ -233,8 +291,9 @@ Run this checklist before taking any action. Address warnings before proceeding.
 **Lock file notes:**
 - Created on session start: `echo $$ > .lightwatch.lock`
 - Removed on phase completion: `rm -f .lightwatch.lock`
-- If session crashes, lock becomes stale — recovery checklist detects this
-- Manual removal: `rm .lightwatch.lock` (only if no other session running)
+- Staleness detection: locks older than 4 hours with dead PID are auto-removed
+- If PID is dead but lock is <4h old, user must manually confirm removal
+- Manual removal: `rm .lightwatch.lock` (only if certain no session is active)
 
 **On phase completion:**
 1. Update state file with completed deliverables
@@ -762,6 +821,483 @@ Full contract specifications are in `docs/contracts/*.hpp.spec` files. During Ph
 
 ---
 
+## CONTRACT SPECIFICATIONS
+
+Complete API specifications for each contract file. Copy these to `docs/contracts/*.hpp` during Phase 0.3.
+
+### tensor.hpp
+
+```cpp
+// LightwatchAI2 API Contract: Tensor
+// Defined by: Phase 03 | Consumers: 04, 05, 08, 09, 11-19, 21-25, 31-36
+#pragma once
+#include <vector>
+#include <memory>
+#include <cstddef>
+#include <initializer_list>
+
+namespace lightwatch {
+
+using Shape = std::vector<size_t>;
+
+template<typename T>
+class Tensor {
+public:
+    // Construction
+    Tensor();
+    explicit Tensor(const Shape& shape);
+    Tensor(const Shape& shape, const T* data);
+    Tensor(const Shape& shape, std::initializer_list<T> data);
+
+    // Static factories
+    static Tensor zeros(const Shape& shape);
+    static Tensor ones(const Shape& shape);
+    static Tensor full(const Shape& shape, T value);
+    static Tensor randn(const Shape& shape);  // N(0,1)
+    static Tensor rand(const Shape& shape);   // U[0,1)
+
+    // Properties
+    const Shape& shape() const;
+    size_t size(int dim) const;   // Negative dims count from end
+    size_t numel() const;
+    size_t ndim() const;
+    T* data();
+    const T* data() const;
+    bool is_contiguous() const;
+
+    // Element access
+    T& operator()(const std::vector<size_t>& indices);
+    const T& operator()(const std::vector<size_t>& indices) const;
+
+    // Shape operations
+    Tensor reshape(const Shape& new_shape) const;
+    Tensor view(const Shape& new_shape) const;
+    Tensor transpose(int dim0, int dim1) const;
+    Tensor permute(const std::vector<int>& dims) const;
+    Tensor squeeze(int dim = -1) const;
+    Tensor unsqueeze(int dim) const;
+    Tensor slice(int dim, size_t start, size_t end) const;
+    Tensor contiguous() const;
+
+    // Arithmetic (return new tensor)
+    Tensor operator+(const Tensor& other) const;
+    Tensor operator-(const Tensor& other) const;
+    Tensor operator*(const Tensor& other) const;
+    Tensor operator/(const Tensor& other) const;
+    Tensor operator-() const;
+
+    // Scalar arithmetic
+    Tensor operator+(T scalar) const;
+    Tensor operator*(T scalar) const;
+
+    // In-place (return reference)
+    Tensor& fill_(T value);
+    Tensor& zero_();
+    Tensor& add_(const Tensor& other);
+    Tensor& mul_(const Tensor& other);
+
+    // Reductions
+    Tensor sum(int dim = -1, bool keepdim = false) const;
+    Tensor mean(int dim = -1, bool keepdim = false) const;
+    Tensor max(int dim = -1, bool keepdim = false) const;
+    T item() const;  // Scalar tensors only
+
+    // Math functions
+    Tensor exp() const;
+    Tensor log() const;
+    Tensor sqrt() const;
+    Tensor abs() const;
+    Tensor pow(T exponent) const;
+
+    Tensor clone() const;
+
+private:
+    Shape shape_;
+    std::vector<size_t> strides_;
+    std::shared_ptr<T[]> data_;
+    size_t offset_ = 0;
+};
+
+// Free functions
+template<typename T> Tensor<T> matmul(const Tensor<T>& a, const Tensor<T>& b);
+template<typename T> Tensor<T> concat(const std::vector<Tensor<T>>& tensors, int dim);
+template<typename T> Tensor<T> stack(const std::vector<Tensor<T>>& tensors, int dim);
+
+}  // namespace lightwatch
+```
+
+### autograd.hpp
+
+```cpp
+// LightwatchAI2 API Contract: Autograd
+// Defined by: Phase 05 | Consumers: 08, 11-19, 21-25, 31
+#pragma once
+#include "tensor.hpp"
+#include <memory>
+#include <vector>
+#include <functional>
+
+namespace lightwatch::autograd {
+
+class Function;
+
+class Variable {
+public:
+    Variable();
+    explicit Variable(Tensor<float> data, bool requires_grad = false);
+
+    // Data access
+    Tensor<float>& data();
+    const Tensor<float>& data() const;
+
+    // Gradient access
+    Tensor<float>& grad();
+    const Tensor<float>& grad() const;
+    bool has_grad() const;
+    bool requires_grad() const;
+    void set_requires_grad(bool requires);
+    void zero_grad();
+
+    // Shape delegation
+    const Shape& shape() const;
+    size_t numel() const;
+    size_t ndim() const;
+
+    // Backpropagation
+    void backward();
+    void backward(const Tensor<float>& grad_output);
+
+    // Graph management
+    void set_grad_fn(std::shared_ptr<Function> fn);
+    std::shared_ptr<Function> grad_fn() const;
+    Variable detach() const;
+    void retain_grad();
+
+private:
+    Tensor<float> data_;
+    Tensor<float> grad_;
+    bool requires_grad_ = false;
+    bool has_grad_ = false;
+    std::shared_ptr<Function> grad_fn_;
+};
+
+class Function {
+public:
+    virtual ~Function() = default;
+    virtual std::vector<Tensor<float>> backward(const Tensor<float>& grad_output) = 0;
+
+protected:
+    void save_for_backward(const Variable& v);
+    std::vector<Variable> saved_variables_;
+};
+
+// Differentiable operations
+namespace ops {
+    Variable add(const Variable& a, const Variable& b);
+    Variable sub(const Variable& a, const Variable& b);
+    Variable mul(const Variable& a, const Variable& b);
+    Variable div(const Variable& a, const Variable& b);
+    Variable neg(const Variable& x);
+    Variable matmul(const Variable& a, const Variable& b);
+    Variable transpose(const Variable& x, int dim0, int dim1);
+
+    // Activations
+    Variable relu(const Variable& x);
+    Variable gelu(const Variable& x);
+    Variable sigmoid(const Variable& x);
+    Variable tanh(const Variable& x);
+    Variable softmax(const Variable& x, int dim);
+    Variable log_softmax(const Variable& x, int dim);
+
+    // Reductions
+    Variable sum(const Variable& x, int dim = -1, bool keepdim = false);
+    Variable mean(const Variable& x, int dim = -1, bool keepdim = false);
+
+    // Shape
+    Variable reshape(const Variable& x, const Shape& new_shape);
+    Variable squeeze(const Variable& x, int dim = -1);
+    Variable unsqueeze(const Variable& x, int dim);
+    Variable slice(const Variable& x, int dim, size_t start, size_t end);
+
+    // Misc
+    Variable dropout(const Variable& x, float p, bool training);
+    Variable layer_norm(const Variable& x, const Variable& weight,
+                        const Variable& bias, float eps = 1e-5);
+}
+
+class NoGradGuard {
+public:
+    NoGradGuard();
+    ~NoGradGuard();
+private:
+    static thread_local int guard_count_;
+};
+
+bool is_grad_enabled();
+
+}  // namespace lightwatch::autograd
+```
+
+### tokenizer.hpp
+
+```cpp
+// LightwatchAI2 API Contract: Tokenizer
+// Defined by: Phase 06-07 | Consumers: 08, 27, 38
+#pragma once
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <cstdint>
+
+namespace lightwatch::tokenizer {
+
+using TokenId = int32_t;
+
+struct SpecialTokens {
+    static constexpr TokenId EOS = 50256;  // <|endoftext|>
+    static constexpr TokenId PAD = 50256;  // Same as EOS for GPT-2
+};
+
+class Vocabulary {
+public:
+    Vocabulary();
+
+    TokenId token_to_id(const std::string& token) const;
+    std::string id_to_token(TokenId id) const;
+    bool contains(const std::string& token) const;
+    size_t size() const;
+
+    TokenId eos_id() const;
+    TokenId pad_id() const;
+
+    static Vocabulary from_json(const std::string& path);  // encoder.json
+
+private:
+    std::unordered_map<std::string, TokenId> token_to_id_;
+    std::vector<std::string> id_to_token_;
+};
+
+class BPETokenizer {
+public:
+    BPETokenizer();
+
+    std::vector<TokenId> encode(const std::string& text) const;
+    std::string decode(const std::vector<TokenId>& tokens) const;
+
+    std::vector<std::vector<TokenId>> encode_batch(
+        const std::vector<std::string>& texts) const;
+
+    const Vocabulary& vocab() const;
+    size_t vocab_size() const;  // Returns 50257
+    TokenId eos_id() const;
+    TokenId pad_id() const;
+
+    static BPETokenizer from_files(const std::string& vocab_path,
+                                    const std::string& merges_path);
+    static BPETokenizer gpt2(const std::string& vocab_dir = "data/vocab");
+
+private:
+    Vocabulary vocab_;
+    std::vector<std::pair<std::string, std::string>> merges_;
+    struct PairHash {
+        size_t operator()(const std::pair<std::string,std::string>& p) const;
+    };
+    std::unordered_map<std::pair<std::string,std::string>, int, PairHash> merge_ranks_;
+};
+
+}  // namespace lightwatch::tokenizer
+```
+
+### module.hpp
+
+```cpp
+// LightwatchAI2 API Contract: Module
+// Defined by: Phase 11 | Consumers: 12-19, 31
+#pragma once
+#include "autograd.hpp"
+#include <vector>
+#include <string>
+#include <unordered_map>
+#include <memory>
+
+namespace lightwatch::nn {
+
+using autograd::Variable;
+
+class Module {
+public:
+    virtual ~Module() = default;
+
+    virtual Variable forward(const Variable& input) = 0;
+
+    std::vector<Variable*> parameters();
+    std::vector<std::pair<std::string, Variable*>> named_parameters();
+    size_t num_parameters() const;
+
+    void train(bool mode = true);
+    void eval();
+    bool is_training() const;
+
+    void zero_grad();
+
+    std::unordered_map<std::string, Tensor<float>> state_dict() const;
+    void load_state_dict(const std::unordered_map<std::string, Tensor<float>>& dict);
+
+protected:
+    bool training_ = true;
+    void register_parameter(const std::string& name, Variable& param);
+    void register_module(const std::string& name, std::shared_ptr<Module> module);
+
+private:
+    std::vector<std::pair<std::string, Variable*>> parameters_;
+    std::vector<std::pair<std::string, std::shared_ptr<Module>>> submodules_;
+};
+
+class Linear : public Module {
+public:
+    Linear(size_t in_features, size_t out_features, bool bias = true);
+    Variable forward(const Variable& input) override;
+
+    Variable weight;  // Shape: [out_features, in_features]
+    Variable bias;    // Shape: [out_features]
+};
+
+class LayerNorm : public Module {
+public:
+    LayerNorm(size_t normalized_shape, float eps = 1e-5);
+    Variable forward(const Variable& input) override;
+
+    Variable weight;  // Shape: [normalized_shape]
+    Variable bias;    // Shape: [normalized_shape]
+private:
+    float eps_;
+};
+
+class Embedding : public Module {
+public:
+    Embedding(size_t num_embeddings, size_t embedding_dim);
+    Variable forward(const Variable& input) override;
+    Variable forward(const Tensor<int32_t>& indices);
+
+    Variable weight;  // Shape: [num_embeddings, embedding_dim]
+};
+
+class Dropout : public Module {
+public:
+    explicit Dropout(float p = 0.1);
+    Variable forward(const Variable& input) override;
+private:
+    float p_;
+};
+
+}  // namespace lightwatch::nn
+```
+
+### optimizer.hpp
+
+```cpp
+// LightwatchAI2 API Contract: Optimizer
+// Defined by: Phase 22 | Consumers: 23-26, 29
+#pragma once
+#include "autograd.hpp"
+#include <vector>
+#include <unordered_map>
+
+namespace lightwatch::optim {
+
+using autograd::Variable;
+
+struct OptimizerOptions {
+    float lr = 1e-3;
+    float weight_decay = 0.0;
+};
+
+class Optimizer {
+public:
+    explicit Optimizer(std::vector<Variable*> params, OptimizerOptions opts = {});
+    virtual ~Optimizer() = default;
+
+    virtual void step() = 0;
+    virtual void zero_grad();
+
+    float get_lr() const;
+    void set_lr(float lr);
+
+protected:
+    std::vector<Variable*> params_;
+    OptimizerOptions options_;
+    std::unordered_map<Variable*, std::unordered_map<std::string, Tensor<float>>> state_;
+};
+
+struct SGDOptions : OptimizerOptions {
+    float momentum = 0.0;
+    bool nesterov = false;
+};
+
+class SGD : public Optimizer {
+public:
+    SGD(std::vector<Variable*> params, SGDOptions opts = {});
+    void step() override;
+private:
+    SGDOptions opts_;
+};
+
+struct AdamOptions : OptimizerOptions {
+    float beta1 = 0.9;
+    float beta2 = 0.999;
+    float eps = 1e-8;
+};
+
+class Adam : public Optimizer {
+public:
+    Adam(std::vector<Variable*> params, AdamOptions opts = {});
+    void step() override;
+private:
+    AdamOptions opts_;
+    int step_count_ = 0;
+};
+
+class AdamW : public Adam {
+public:
+    AdamW(std::vector<Variable*> params, AdamOptions opts = {});
+    void step() override;
+};
+
+class LRScheduler {
+public:
+    explicit LRScheduler(Optimizer& optimizer);
+    virtual ~LRScheduler() = default;
+    virtual void step() = 0;
+    float get_last_lr() const;
+protected:
+    Optimizer& optimizer_;
+    int step_count_ = 0;
+    float base_lr_;
+};
+
+class CosineAnnealingLR : public LRScheduler {
+public:
+    CosineAnnealingLR(Optimizer& optimizer, int T_max, float eta_min = 0.0);
+    void step() override;
+private:
+    int T_max_;
+    float eta_min_;
+};
+
+class WarmupLR : public LRScheduler {
+public:
+    WarmupLR(Optimizer& optimizer, int warmup_steps, float start_factor = 0.0);
+    void step() override;
+private:
+    int warmup_steps_;
+    float start_factor_;
+};
+
+}  // namespace lightwatch::optim
+```
+
+---
+
 ## PHASE 0.7: ACQUIRE EXTERNAL ASSETS
 
 ### Objective
@@ -896,6 +1432,30 @@ This is OPTIONAL. The model must be trainable from scratch. Weight loading is fo
 
 ### Objective
 Before any implementation begins, generate all 40 phase prompt files. This ensures architectural coherence across the entire project.
+
+### Test Spec File Creation
+
+During Phase 0.5, create the test spec files in `docs/test_specs/` BEFORE generating phase prompts. The test specs are defined in the TEST SPEC FILE TEMPLATES section of this document.
+
+**Creation order within Phase 0.5:**
+1. Create `docs/test_specs/README.md` with usage instructions
+2. Create all `docs/test_specs/phase-XX-*.md` files from templates in TEST SPEC FILE TEMPLATES section
+3. Generate phase prompts that reference these test specs
+4. Run `python3 scripts/validate_prompts.py` to validate
+
+```bash
+# Step 1: Create test_specs directory and README
+mkdir -p docs/test_specs
+# (copy README content from TEST SPEC FILE TEMPLATES section)
+
+# Step 2: Create test spec files for phases 03, 05, 06, 15, 31, etc.
+# (copy each template from TEST SPEC FILE TEMPLATES section)
+
+# Step 3: Generate phase prompts (using the procedure below)
+
+# Step 4: Validate
+python3 scripts/validate_prompts.py
+```
 
 ### Phase Prompt Template (MANDATORY)
 
@@ -1294,6 +1854,158 @@ This enables phase-specific filtering: `ctest -R "phase_03"`
 
 ---
 
+## TEST SPEC FILE TEMPLATES
+
+These templates define the complete test specifications for complex phases. During Phase 0.5, copy these to `docs/test_specs/phase-XX-*.md` files BEFORE generating phase prompts.
+
+### docs/test_specs/phase-03-tensor.md
+
+```markdown
+# Phase 03: Tensor Core - Test Specifications
+
+**Complexity:** HIGH
+**Minimum Tests Required:** 12
+
+## Required Tests
+
+| Test | Input | Expected |
+|------|-------|----------|
+| `test_phase_03_tensor_construction` | `Tensor<float> t({2,3,4})` | `t.numel()==24`, `t.ndim()==3`, `t.shape()=={2,3,4}` |
+| `test_phase_03_tensor_zeros` | `Tensor<float>::zeros({3,3})` | All 9 elements == 0.0f |
+| `test_phase_03_tensor_ones` | `Tensor<float>::ones({2,2})` | All 4 elements == 1.0f |
+| `test_phase_03_tensor_randn` | `Tensor<float>::randn({1000})` | Mean ∈ [-0.1, 0.1], Std ∈ [0.9, 1.1] |
+| `test_phase_03_tensor_matmul_2d` | `A{2,3}=[1..6], B{3,4}=[1..12]` | Result shape `{2,4}`, `C[0,0]==38.0f` |
+| `test_phase_03_tensor_matmul_batch` | `A{2,2,3}, B{2,3,4}` randn | Result shape `{2,2,4}`, matches loop impl |
+| `test_phase_03_tensor_broadcast_add` | `A{2,3}=[1..6] + B{3}=[10,20,30]` | `C[0,:]={11,22,33}`, `C[1,:]={14,25,36}` |
+| `test_phase_03_tensor_broadcast_mul` | `A{2,1,4}=1.0 * B{3,1}=[2,3,4]` | Result shape `{2,3,4}`, all rows scaled |
+| `test_phase_03_tensor_slice` | `T{10,20}.slice(0, 2, 5)` | Result shape `{3,20}`, `R[0,:]==T[2,:]` |
+| `test_phase_03_tensor_transpose` | `T{2,3}=[1..6].transpose(0,1)` | Result shape `{3,2}`, `R[0,1]==T[1,0]==4` |
+| `test_phase_03_tensor_contiguous` | `T{4,4}.slice(0,1,3)` (non-contig) | After `.contiguous()`: `is_contiguous()==true` |
+| `test_phase_03_tensor_reduction_sum` | `T{2,3}=[1,2,3,4,5,6].sum(1)` | Result `{2}`, values `[6.0, 15.0]` |
+
+## Implementation Notes
+
+- All operations must handle edge cases: empty tensors, single-element tensors
+- Broadcasting follows NumPy rules (right-align shapes, expand dims of size 1)
+- Tolerance for floating-point comparisons: 1e-5
+```
+
+### docs/test_specs/phase-05-autograd.md
+
+```markdown
+# Phase 05: Autograd Engine - Test Specifications
+
+**Complexity:** HIGH
+**Minimum Tests Required:** 10
+
+## Required Tests
+
+| Test | Input | Expected |
+|------|-------|----------|
+| `test_phase_05_autograd_add` | `a=Var(2.0,grad=T), b=Var(3.0,grad=T), c=a+b, c.backward()` | `a.grad==1.0`, `b.grad==1.0` |
+| `test_phase_05_autograd_mul` | `a=Var(2.0,grad=T), b=Var(3.0,grad=T), c=a*b, c.backward()` | `a.grad==3.0`, `b.grad==2.0` |
+| `test_phase_05_autograd_matmul` | `A{2,3}=randn, B{3,4}=randn, C=A@B, C.sum().backward()` | `A.grad.shape=={2,3}`, numerical grad check (tol 1e-4) |
+| `test_phase_05_autograd_chain` | `a{2,2}=randn, b{2,2}=randn, d=relu(a@b+1.0), d.sum().backward()` | All inputs have `.has_grad()==true` |
+| `test_phase_05_autograd_no_grad` | `a=Var(2.0,grad=F), b=Var(3.0,grad=T), c=a*b` | `a.has_grad()==false`, `b.has_grad()==true` |
+| `test_phase_05_autograd_accumulation` | `a=Var(2.0,grad=T), b=a*3, c=a*4, (b+c).backward()` | `a.grad==7.0` (gradients accumulate) |
+| `test_phase_05_autograd_detach` | `a=Var(2.0,grad=T), b=a.detach()` | `b.grad_fn()==nullptr`, `b.data()==a.data()` |
+| `test_phase_05_autograd_relu_grad` | `x=Var([-1,0,1,2],grad=T), y=relu(x), y.sum().backward()` | `x.grad==[0,0,1,1]` |
+| `test_phase_05_autograd_softmax_grad` | `x=Var([1,2,3],grad=T), y=softmax(x,0), y[1].backward()` | Jacobian matches numerical diff (tol 1e-4) |
+| `test_phase_05_autograd_no_grad_guard` | Inside `NoGradGuard{}`, create `c=a*b` | `c.grad_fn()==nullptr` regardless of input grad flags |
+
+## Implementation Notes
+
+- Numerical gradient checking: `(f(x+h) - f(x-h)) / 2h` with `h=1e-4`
+- Gradient accumulation is the default (call `zero_grad()` to reset)
+- NoGradGuard must be thread-safe (use thread_local counter)
+```
+
+### docs/test_specs/phase-06-tokenizer.md
+
+```markdown
+# Phase 06: BPE Tokenizer - Test Specifications
+
+**Complexity:** MEDIUM
+**Minimum Tests Required:** 10
+
+## Required Tests
+
+| Test | Input | Expected |
+|------|-------|----------|
+| `test_phase_06_tokenizer_roundtrip` | `"Hello, world!"` | `decode(encode(x)) == "Hello, world!"` |
+| `test_phase_06_tokenizer_special` | `tokenizer.eos_id()` | Returns `50256` |
+| `test_phase_06_tokenizer_unicode` | `"日本語テスト"` | Non-empty token vector, no crash |
+| `test_phase_06_tokenizer_empty` | `""` | Returns empty `vector<TokenId>{}` |
+| `test_phase_06_tokenizer_vocab_size` | `tokenizer.vocab_size()` | Returns `50257` |
+| `test_phase_06_tokenizer_whitespace` | `"  hello   world  "` | Roundtrip preserves exact whitespace |
+| `test_phase_06_tokenizer_numbers` | `"12345 67890"` | Roundtrip exact match |
+| `test_phase_06_tokenizer_long_text` | 10KB random ASCII text | No crash, all token IDs in `[0, 50256]` |
+| `test_phase_06_tokenizer_emoji` | `"Hello 🌍🚀 World"` | Roundtrip preserves emojis exactly |
+| `test_phase_06_tokenizer_newlines` | `"line1\nline2\r\nline3"` | Roundtrip exact match |
+
+## Implementation Notes
+
+- GPT-2 uses byte-level BPE (handles arbitrary UTF-8)
+- Vocab files: `encoder.json` (50257 entries), `vocab.bpe` (50000 merges)
+- No UNK token — unknown bytes encoded as byte tokens (e.g., `<0xFF>`)
+```
+
+### docs/test_specs/phase-15-attention.md
+
+```markdown
+# Phase 15: Single-Head Attention - Test Specifications
+
+**Complexity:** HIGH
+**Minimum Tests Required:** 8
+
+## Required Tests
+
+| Test | Input | Expected |
+|------|-------|----------|
+| `test_phase_15_attention_shape` | `Q,K,V all {2,12,64,64}` | Output shape `{2,12,64,64}` |
+| `test_phase_15_attention_causal` | `S=4, query at pos 2` | Attention weights: `w[3]==0.0` (future masked) |
+| `test_phase_15_attention_softmax` | `S=8, any Q,K,V` | Each row of attention weights sums to 1.0 (tol 1e-5) |
+| `test_phase_15_attention_gradient` | `Q,K,V {1,1,4,8} randn` | Numerical gradient check passes (tol 1e-3) |
+| `test_phase_15_attention_scale` | `d_k=64` | Pre-softmax scores scaled by `1/8.0` (sqrt(64)) |
+| `test_phase_15_attention_mask_inf` | Masked position `K[0,0,3,:]=999.0` | Output unaffected by masked position values |
+| `test_phase_15_attention_single_token` | `S=1, Q,K,V {1,1,1,64}` | Output shape `{1,1,1,64}`, no NaN |
+| `test_phase_15_attention_long_sequence` | `S=1024, B=1, H=1, D=64` | Completes without OOM, output shape correct |
+
+## Implementation Notes
+
+- Attention formula: `softmax(Q @ K.T / sqrt(d_k) + mask) @ V`
+- Causal mask: `-inf` for positions where `j > i`
+- Use `-1e9` instead of `-inf` to avoid NaN in softmax gradients
+```
+
+### docs/test_specs/phase-31-gpt.md
+
+```markdown
+# Phase 31: GPT Architecture - Test Specifications
+
+**Complexity:** HIGH
+**Minimum Tests Required:** 6
+
+## Required Tests
+
+| Test | Input | Expected |
+|------|-------|----------|
+| `test_phase_31_gpt_forward_shape` | `input_ids {2, 16}` (batch=2, seq=16) | Output logits shape `{2, 16, 50257}` |
+| `test_phase_31_gpt_causal` | Seq `[A,B,C,D]`, compute logits | `logits[2]` (for C) identical whether D present or not |
+| `test_phase_31_gpt_parameter_count` | GPT-2 Small config | Total params in `[118M, 130M]` (~124M ± 5%) |
+| `test_phase_31_gpt_gradient` | Forward + backward on random input | All named parameters have non-zero `.grad` |
+| `test_phase_31_gpt_embedding_tied` | Check `wte.weight` and `lm_head.weight` | Same underlying data pointer |
+| `test_phase_31_gpt_layer_order` | Hook each layer, forward pass | Layers execute in order 0,1,2,...,11 |
+
+## Implementation Notes
+
+- GPT-2 Small config: 12 layers, 768 hidden, 12 heads, 50257 vocab, 1024 ctx
+- Parameter count breakdown: wte(38.6M) + wpe(0.8M) + 12*layer(7.1M) + ln_f(1.5K) ≈ 124M
+- Embedding tying: `lm_head.weight = wte.weight` (shared, not copied)
+```
+
+---
+
 ## BENCHMARK SPECIFICATION
 
 ### Hardware Baseline
@@ -1680,12 +2392,40 @@ ctest -R "integration_foundation" --output-on-failure
 # Verify tokenizer produces valid token IDs
 ./build/bin/test_tokenizer --vocab data/vocab/encoder.json
 
-# Memory check (if valgrind available)
+# Memory baseline test (Linux/macOS)
+# Creates a 512x768 tensor, performs matmul, checks RSS < 50MB
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    MEMORY_OUTPUT=$(/usr/bin/time -v ./build/bin/test_tensor_memory_baseline 2>&1)
+    MAX_RSS=$(echo "$MEMORY_OUTPUT" | grep "Maximum resident set size" | awk '{print $6}')
+    if [ "$MAX_RSS" -gt 51200 ]; then
+        echo "ERROR: Memory baseline ${MAX_RSS}KB exceeds 50MB limit"
+        exit 1
+    fi
+    echo "Memory baseline: ${MAX_RSS}KB (limit: 51200KB)"
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    MEMORY_OUTPUT=$(/usr/bin/time -l ./build/bin/test_tensor_memory_baseline 2>&1)
+    MAX_RSS_BYTES=$(echo "$MEMORY_OUTPUT" | grep "maximum resident set size" | awk '{print $1}')
+    MAX_RSS=$((MAX_RSS_BYTES / 1024))
+    if [ "$MAX_RSS" -gt 51200 ]; then
+        echo "ERROR: Memory baseline ${MAX_RSS}KB exceeds 50MB limit"
+        exit 1
+    fi
+    echo "Memory baseline: ${MAX_RSS}KB (limit: 51200KB)"
+fi
+
+# Memory leak check (if valgrind available)
 if command -v valgrind &> /dev/null; then
     valgrind --leak-check=full --error-exitcode=1 \
-        ./build/bin/test_tensor_basic
+        ./build/bin/test_tensor_basic 2>&1 | tail -20
+    echo "Valgrind memory leak check passed"
 fi
 ```
+
+**Memory baseline test requirements (Phase 05):**
+- `test_tensor_memory_baseline` creates 512x768 float32 tensor (~1.5MB)
+- Performs matmul with transposed self: O(512×768×768) = ~302M FLOPs
+- Peak RSS must stay under 50MB (allows for temporary allocations)
+- No external BLAS calls in this test
 
 ### Checkpoint 20: Neural Core Verification
 ```bash
@@ -2059,6 +2799,49 @@ Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>"
 git branch -M main
 git remote add origin https://github.com/watchthelight/LightwatchAI2.git
 git push -u origin main
+```
+
+---
+
+## CONTEXT MANAGEMENT
+
+This prompt is large (~2500 lines). Follow these guidelines to manage context efficiently:
+
+### Reading Strategy
+1. **Do NOT read entire Master Prompt at session start** — rely on state file for current phase
+2. **Read only relevant sections** when needed:
+   - Starting a phase → read its prompt file from `docs/prompts/phase-XX-*.md`
+   - Need contract → read from `docs/contracts/*.hpp.spec`
+   - Need test spec → read from `docs/test_specs/phase-XX-*.md`
+3. **Use state file** for navigation — `current_phase` tells you where to focus
+
+### Context Budget
+| Content | When to Load |
+|---------|--------------|
+| State file | Always (first read each session) |
+| Current phase prompt | When starting implementation |
+| Dependency phase outputs | Only if needed for inputs |
+| Contract files | When implementing module boundaries |
+| Test specs | When writing tests |
+| Master Prompt sections | Only for reference (checkpoints, anti-patterns, etc.) |
+
+### Avoiding Context Overflow
+- Complete and commit each phase before reading the next phase prompt
+- If context becomes constrained, summarize completed work in state file
+- Use `jq` to query state file rather than holding full state in context
+- Reference external files by path rather than copying content into chat
+
+### Session Recovery
+If resuming after interruption:
+```bash
+# 1. Read state file
+cat .lightwatch_state.json | jq '.current_phase, .completed_phases'
+
+# 2. Check for uncommitted work
+git status
+
+# 3. Resume from current phase prompt
+cat docs/prompts/phase-$(jq -r '.current_phase' .lightwatch_state.json | xargs printf "%02d")-*.md
 ```
 
 ---
