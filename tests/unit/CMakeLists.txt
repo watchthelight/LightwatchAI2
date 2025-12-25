@@ -24,3 +24,9 @@ add_test(NAME test_phase_04_simd COMMAND test_simd)
 add_executable(test_autograd test_autograd.cpp)
 lightwatch_set_compiler_flags(test_autograd)
 add_test(NAME test_phase_05_autograd COMMAND test_autograd)
+
+# Phase 06: BPE Tokenizer tests
+add_executable(test_tokenizer test_tokenizer.cpp)
+lightwatch_set_compiler_flags(test_tokenizer)
+add_test(NAME test_phase_06_tokenizer COMMAND test_tokenizer)
+set_tests_properties(test_phase_06_tokenizer PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
