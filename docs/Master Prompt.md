@@ -80,6 +80,32 @@ The serialization format (Phase 37) must be compatible with HuggingFace GPT-2 we
 | valgrind | 3.15 | 3.21+ | Memory leak detection (Linux) |
 | curl | 7.68 | 8.0+ | Asset downloads |
 
+### Quick Install (if tools missing)
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install -y cmake g++ python3 python3-pip jq curl valgrind
+pip3 install --user numpy  # For validation scripts if needed
+```
+
+**macOS (Homebrew):**
+```bash
+brew install cmake jq curl
+# valgrind not available on macOS ARM; memory checks will be skipped
+```
+
+**Windows (with chocolatey):**
+```powershell
+choco install cmake jq curl python3
+# Build with Visual Studio 2022 Developer Command Prompt
+```
+
+**Verify installation:**
+```bash
+bash scripts/check_toolchain.sh
+```
+
 ### Version Check Script
 Create during Phase 0 at `scripts/check_toolchain.sh`:
 ```bash
@@ -133,6 +159,40 @@ Run during Phase 0 and document results in `docs/architecture/TOOLCHAIN.md`.
 5. If `phase_status == "EXECUTING"` → resume from `pending_deliverables`
 6. If `phase_status == "VERIFYING"` → re-run verification
 7. If `phase_status == "FAILED"` → read error, attempt fix or escalate
+
+**Session recovery checklist (run on every session start):**
+```bash
+# 1. Check state file exists and is valid JSON
+jq . .lightwatch_state.json > /dev/null || echo "ERROR: Invalid state file"
+
+# 2. Check current branch matches state
+CURRENT=$(git branch --show-current)
+EXPECTED=$(jq -r '.current_branch' .lightwatch_state.json)
+if [ "$CURRENT" != "$EXPECTED" ]; then
+    echo "WARNING: On branch $CURRENT, state expects $EXPECTED"
+fi
+
+# 3. Check for uncommitted changes
+if ! git diff --quiet; then
+    echo "WARNING: Uncommitted changes detected"
+    git status --short
+fi
+
+# 4. Verify last commit matches state
+LAST_COMMIT=$(git log -1 --format='%H')
+STATE_COMMIT=$(jq -r '.last_commit' .lightwatch_state.json)
+if [ "$LAST_COMMIT" != "$STATE_COMMIT" ] && [ "$STATE_COMMIT" != "" ]; then
+    echo "WARNING: HEAD ($LAST_COMMIT) differs from state ($STATE_COMMIT)"
+fi
+
+# 5. If phase was EXECUTING, verify what's done
+if [ "$(jq -r '.phase_status' .lightwatch_state.json)" == "EXECUTING" ]; then
+    echo "Resuming phase $(jq '.current_phase' .lightwatch_state.json)"
+    echo "Completed: $(jq '.completed_deliverables' .lightwatch_state.json)"
+    echo "Pending: $(jq '.pending_deliverables' .lightwatch_state.json)"
+fi
+```
+Run this checklist before taking any action. Address warnings before proceeding.
 
 **On phase completion:**
 1. Update state file with completed deliverables
@@ -266,6 +326,67 @@ Claude MUST NOT be listed as commit author under any circumstances.
 - 12 layers, 768 hidden, 12 heads
 - 50257 vocab, 1024 context
 ```
+
+### Commit Message Format
+
+All commits MUST follow this format:
+
+```
+[PHASE-XX] <type>: <subject>
+
+<body>
+
+Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>
+```
+
+**Type values:**
+- `feat` — New feature or functionality
+- `fix` — Bug fix
+- `test` — Adding or updating tests
+- `docs` — Documentation changes
+- `refactor` — Code restructuring without behavior change
+- `perf` — Performance improvement
+- `chore` — Build system, dependencies, tooling
+
+**Examples:**
+```bash
+# Feature addition
+git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com" \
+    commit -m "[PHASE-03] feat: Implement Tensor reshape and view operations
+
+Add reshape() for copying data to new shape and view() for zero-copy
+reshape when strides permit. Both validate that total elements match.
+
+Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>"
+
+# Bug fix
+git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com" \
+    commit -m "[PHASE-04] fix: Handle unaligned memory in SIMD dot product
+
+AVX2 load instructions require 32-byte alignment. Added scalar fallback
+for the first N elements until aligned, then SIMD for remainder.
+
+Fixes: test_simd_alignment
+
+Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>"
+
+# Test addition
+git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com" \
+    commit -m "[PHASE-06] test: Add tokenizer edge case tests
+
+- test_tokenizer_empty: empty string handling
+- test_tokenizer_emoji: Unicode emoji roundtrip
+- test_tokenizer_long: 2000 token stress test
+
+Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>"
+```
+
+**Rules:**
+1. Subject line ≤ 72 characters
+2. Body wrapped at 72 characters
+3. Blank line between subject and body
+4. Reference test names when fixing test failures
+5. ALWAYS include Signed-off-by line
 
 ### docs/architecture/DECISIONS.md Template
 ```markdown
@@ -1001,10 +1122,27 @@ private:
 Download required tokenizer assets before implementation begins.
 
 ### Deliverables
-| File | Source | Purpose |
-|------|--------|---------|
-| `data/vocab/vocab.bpe` | HuggingFace gpt2 | BPE merge rules (50000 merges) |
-| `data/vocab/encoder.json` | HuggingFace gpt2 | Token-to-ID mapping (50257 entries) |
+| File | Source | Purpose | Required |
+|------|--------|---------|----------|
+| `data/vocab/vocab.bpe` | HuggingFace gpt2 | BPE merge rules (50000 merges) | **YES** |
+| `data/vocab/encoder.json` | HuggingFace gpt2 | Token-to-ID mapping (50257 entries) | **YES** |
+| `data/weights/pytorch_model.bin` | HuggingFace gpt2 | Pretrained weights (~500MB) | **NO** (optional) |
+
+### Weight Download Policy
+- Tokenizer assets (`vocab.bpe`, `encoder.json`) are **required** for any operation
+- Pretrained weights are **optional** and only needed for:
+  - Validation against reference implementation
+  - Inference without training
+  - Fine-tuning from pretrained checkpoint
+
+If pretrained weights are needed later (e.g., Phase 37 validation), download them then:
+```bash
+# Optional: Download pretrained weights when needed
+curl -L -o data/weights/pytorch_model.bin \
+    "https://huggingface.co/gpt2/resolve/main/pytorch_model.bin"
+```
+
+Do NOT fail Phase 0.7 if weight download fails. Only tokenizer assets are blocking.
 
 ### Fallback URLs
 
@@ -1865,6 +2003,28 @@ def validate_required_tests(content: str) -> list[str]:
 
     return errors
 
+def validate_test_specs() -> list[str]:
+    """Check that all referenced test_specs files exist."""
+    errors = []
+    test_specs_dir = Path("docs/test_specs")
+
+    # Phases that should have external test specs
+    PHASES_WITH_SPECS = [3, 4, 5, 6, 15, 16, 19, 29, 31, 36, 38]
+
+    if not test_specs_dir.exists():
+        errors.append("docs/test_specs directory does not exist")
+        return errors
+
+    for phase in PHASES_WITH_SPECS:
+        pattern = f"phase-{phase:02d}-*.md"
+        matches = list(test_specs_dir.glob(pattern))
+        if not matches:
+            errors.append(f"Missing test spec file: docs/test_specs/phase-{phase:02d}-*.md")
+        elif len(matches) > 1:
+            errors.append(f"Multiple test spec files for phase {phase}: {[m.name for m in matches]}")
+
+    return errors
+
 def main():
     errors = []
     prompts_dir = Path("docs/prompts")
@@ -1915,6 +2075,11 @@ def main():
             test_count = count_test_rows(content)
             if test_count < MIN_TESTS[i]:
                 errors.append(f"Phase {i:02d}: Has {test_count} tests, requires ≥{MIN_TESTS[i]}")
+
+    # Check test spec files exist
+    spec_errors = validate_test_specs()
+    for e in spec_errors:
+        errors.append(f"Test specs: {e}")
 
     # Report results
     if errors:
@@ -2031,7 +2196,12 @@ These are shell commands that MUST exit 0. Run them ALL before considering the p
    - Implement according to Specification
    - Match contract signatures EXACTLY
    - Write all tests from Required Tests table
-   - Commit frequently with descriptive messages
+   - **Before EVERY commit:**
+     1. Run `cmake --build build` — must exit 0
+     2. Run `ctest -R "phase_$(printf '%02d' $N)" --output-on-failure` — must exit 0
+     3. If either fails, fix before committing
+   - Commit after each logical unit of work with descriptive messages
+   - If tests don't exist yet (early in phase), at minimum ensure build succeeds
 
 6. VERIFY
    - Update .lightwatch_state.json: phase_status="VERIFYING"
@@ -2053,6 +2223,46 @@ These are shell commands that MUST exit 0. Run them ALL before considering the p
    - git add .lightwatch_state.json
    - git commit with authorship
 ```
+
+---
+
+## BUILD FAILURE RECOVERY
+
+When `cmake --build build` fails during implementation:
+
+### 1. Capture the Error
+```bash
+cmake --build build 2>&1 | tee /tmp/build_error.txt
+```
+
+### 2. Classify the Error
+
+| Error Type | Example | Action |
+|------------|---------|--------|
+| Syntax error | `error: expected ';'` | Fix the syntax in indicated file:line |
+| Missing include | `fatal error: 'foo.hpp' not found` | Add include or create missing file |
+| Undefined reference | `undefined reference to 'Bar::baz()'` | Implement missing function or fix signature |
+| Type mismatch | `cannot convert 'X' to 'Y'` | Check contract, fix types |
+| Contract violation | Signature doesn't match contract | DO NOT change contract; fix implementation |
+
+### 3. Fix and Verify
+```bash
+# Make fix
+# Rebuild
+cmake --build build 2>&1 | tee /tmp/build_error.txt
+
+# If same error: re-read error message carefully
+# If new error: address new error
+# If success: run tests before committing
+```
+
+### 4. Escalate if Stuck
+If the same build error persists after 3 fix attempts:
+1. Document in `docs/architecture/ESCALATIONS.md`
+2. Include full error text
+3. Include what was attempted
+4. Set `project_status = "ESCALATED"`
+5. STOP and wait for human input
 
 ---
 
@@ -2353,6 +2563,10 @@ These are common failure modes. Avoid them.
 ### 14. Logging Without Context
 ❌ `std::cerr << "Error: generation failed" << std::endl;`
 ✓ `std::cerr << "Error: generation failed: " << e.what() << " (prompt_tokens=" << n << ")" << std::endl;`
+
+### 15. Committing Without Testing
+❌ `git commit` before running `cmake --build` and `ctest`
+✓ Every commit should represent a buildable, tested state. Run tests before every commit.
 
 ---
 
