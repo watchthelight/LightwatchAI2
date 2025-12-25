@@ -1,10 +1,10 @@
 {
   "project_status": "IN_PROGRESS",
   "generation_complete": true,
-  "current_phase": 7,
+  "current_phase": 8,
   "phase_status": "NOT_STARTED",
   "current_branch": "main",
-  "completed_phases": [0, 0.3, 0.5, 0.7, 0.9, 1, 2, 3, 4, 5, 6],
+  "completed_phases": [0, 0.3, 0.5, 0.7, 0.9, 1, 2, 3, 4, 5, 6, 7],
   "failed_phases": [],
   "completed_deliverables": [
     "tests/smoke/smoke_test.cpp",
@@ -19,7 +19,8 @@
     "include/lightwatch/simd/sse.hpp",
     "include/lightwatch/simd/avx2.hpp",
     "include/lightwatch/autograd.hpp",
-    "include/lightwatch/tokenizer/bpe.hpp"
+    "include/lightwatch/tokenizer/bpe.hpp",
+    "include/lightwatch/tokenizer/vocabulary.hpp"
   ],
   "pending_deliverables": [],
   "last_commit": "",
