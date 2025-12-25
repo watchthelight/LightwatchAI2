@@ -19,3 +19,8 @@ add_test(NAME test_phase_03_tensor COMMAND test_tensor)
 add_executable(test_simd test_simd.cpp)
 lightwatch_set_compiler_flags(test_simd)
 add_test(NAME test_phase_04_simd COMMAND test_simd)
+
+# Phase 05: Autograd engine tests
+add_executable(test_autograd test_autograd.cpp)
+lightwatch_set_compiler_flags(test_autograd)
+add_test(NAME test_phase_05_autograd COMMAND test_autograd)
