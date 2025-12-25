@@ -1,0 +1,62 @@
+<!-- File: docs/references/templates/phase_prompt.md.template -->
+<!-- Part of: LightwatchAI2 Master Prompt Reference Files -->
+<!-- Referenced by: Master_Prompt.md > PHASE 0.5: GENERATE ALL PHASE PROMPTS -->
+<!-- All generated prompts MUST follow this exact structure -->
+
+# Phase XX: <Title>
+
+## Objective
+<1-2 sentences: what this phase delivers>
+
+## Prerequisites
+| Phase | Required Outputs |
+|-------|------------------|
+| NN    | Specific files/symbols needed from that phase |
+
+## Inputs (APIs consumed from prior phases)
+| Source Phase | File | Symbols Used |
+|--------------|------|--------------|
+| NN           | path/to/file.hpp | ClassName, function_name |
+
+## Outputs (Files produced for future phases)
+| File | Public Symbols | Consumed By |
+|------|----------------|-------------|
+| path/to/new/file.hpp | ClassName | Phase NN, MM |
+
+## Specification
+
+### Data Structures
+```cpp
+// Exact class/struct definitions
+```
+
+### Function Signatures
+```cpp
+// Exact C++ signatures for ALL public API
+```
+
+### Algorithmic Requirements
+<Pseudocode or step-by-step logic>
+
+### Performance Constraints
+<Measurable targets if applicable>
+
+## Required Tests
+| Test Name | Input | Expected Output |
+|-----------|-------|-----------------|
+| `test_function_name` | Concrete input | Concrete assertion |
+
+## Acceptance Criteria
+- [ ] `<shell command that exits 0 on success>`
+- [ ] `<another shell command>`
+
+## Estimated Scope
+| Metric | Value |
+|--------|-------|
+| Lines of code | XXX-XXX |
+| New source files | N |
+| New test files | N |
+| Complexity | LOW/MEDIUM/HIGH |
+
+## Notes
+<Edge cases, risks, design decisions>

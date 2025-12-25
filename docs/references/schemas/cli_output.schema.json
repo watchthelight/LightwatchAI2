@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "lightwatch-cli-output",
+  "title": "LightwatchAI2 CLI JSON Output",
+  "description": "Schema for --json output from lightwatch CLI commands",
+
+  "definitions": {
+    "generate_output": {
+      "type": "object",
+      "required": ["command", "prompt", "prompt_tokens", "generated_tokens", "total_duration_ms", "tokens_per_second", "stop_reason"],
+      "properties": {
+        "command": { "const": "generate" },
+        "prompt": { "type": "string" },
+        "prompt_tokens": { "type": "integer", "minimum": 0 },
+        "generated_tokens": { "type": "integer", "minimum": 0 },
+        "total_duration_ms": { "type": "number", "minimum": 0 },
+        "first_token_ms": { "type": "number", "minimum": 0 },
+        "tokens_per_second": { "type": "number", "minimum": 0 },
+        "stop_reason": { "enum": ["eos", "max_tokens", "stop_sequence"] },
+        "seed": { "type": "integer" }
+      }
+    },
+
+    "benchmark_output": {
+      "type": "object",
+      "required": ["command", "prompt_tokens", "generated_tokens", "iterations", "total_seconds", "tokens_per_second"],
+      "properties": {
+        "command": { "const": "benchmark" },
+        "prompt_tokens": { "type": "integer", "minimum": 0 },
+        "generated_tokens": { "type": "integer", "minimum": 0 },
+        "iterations": { "type": "integer", "minimum": 1 },
+        "warmup_iterations": { "type": "integer", "minimum": 0 },
+        "total_seconds": { "type": "number", "minimum": 0 },
+        "tokens_per_second": { "type": "number", "minimum": 0 },
+        "tokens_per_iteration": { "type": "integer", "minimum": 0 },
+        "p50_latency_ms": { "type": "number", "minimum": 0 },
+        "p99_latency_ms": { "type": "number", "minimum": 0 },
+        "hardware": { "type": "string" }
+      }
+    }
+  },
+
+  "oneOf": [
+    { "$ref": "#/definitions/generate_output" },
+    { "$ref": "#/definitions/benchmark_output" }
+  ]
+}

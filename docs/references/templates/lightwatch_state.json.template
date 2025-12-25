@@ -1,0 +1,15 @@
+{
+  "project_status": "IN_PROGRESS",
+  "generation_complete": false,
+  "current_phase": 0,
+  "phase_status": "NOT_STARTED",
+  "current_branch": "main",
+  "completed_phases": [],
+  "failed_phases": [],
+  "completed_deliverables": [],
+  "pending_deliverables": [],
+  "last_commit": "",
+  "validation_passed": false,
+  "checkpoints_passed": [],
+  "escalations": []
+}

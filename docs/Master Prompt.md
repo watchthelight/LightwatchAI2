@@ -12,6 +12,30 @@ You are building a **minimal-dependency C++ text generation model** from scratch
 
 ---
 
+## REFERENCE FILES
+
+Code templates, scripts, and specifications have been extracted to `docs/references/` to reduce context pressure. See `docs/references/README.md` for the complete index.
+
+```
+docs/references/
+├── README.md                     # Index of all reference files
+├── scripts/                      # Shell/Python scripts
+├── templates/                    # Configuration file templates
+├── contracts/                    # C++ API specifications
+├── test_specs/                   # Detailed test specifications
+├── examples/                     # Code examples
+└── schemas/                      # JSON schemas
+```
+
+**Usage:** Read files during phase execution:
+```bash
+cat docs/references/scripts/acquire_assets.sh
+cat docs/references/contracts/tensor.hpp.spec
+cat docs/references/test_specs/phase-03-tensor.md
+```
+
+---
+
 ## CRITICAL CONSTRAINTS
 
 ### Commit Authorship Policy
@@ -142,18 +166,8 @@ bash scripts/check_toolchain.sh
 
 ### Version Check Script
 Create during Phase 0 at `scripts/check_toolchain.sh`:
-```bash
-#!/bin/bash
-set -e
-echo "=== Toolchain Versions ==="
-cmake --version | head -1
-${CXX:-g++} --version | head -1
-python3 --version
-jq --version
-curl --version | head -1
-valgrind --version 2>/dev/null || echo "valgrind: not installed (optional on macOS)"
-echo "=== Check Complete ==="
-```
+
+**File:** `docs/references/scripts/check_toolchain.sh`
 
 Run during Phase 0 and document results in `docs/architecture/TOOLCHAIN.md`.
 
@@ -223,69 +237,16 @@ FetchContent_MakeAvailable(<name>)
 7. If `phase_status == "FAILED"` → read error, attempt fix or escalate
 
 **Session recovery checklist (run on every session start):**
-```bash
-# 0. Check for concurrent execution (lock file with staleness detection)
-LOCK_FILE=".lightwatch.lock"
-STALE_HOURS=4  # Lock files older than 4 hours are considered stale
 
-if [ -f "$LOCK_FILE" ]; then
-    LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
+**File:** `docs/references/scripts/session_recovery.sh`
 
-    # Check if PID is still running
-    if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
-        echo "ERROR: Another session is actively running (PID $LOCK_PID)"
-        exit 1
-    fi
+Key checks:
+- Lock file with 4-hour staleness detection
+- State file JSON validation
+- Branch/commit verification
+- Uncommitted changes detection
+- Phase resumption status
 
-    # Check lock file age (staleness detection)
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        LOCK_AGE=$(( ($(date +%s) - $(stat -f %m "$LOCK_FILE")) / 3600 ))
-    else
-        LOCK_AGE=$(( ($(date +%s) - $(stat -c %Y "$LOCK_FILE")) / 3600 ))
-    fi
-
-    if [ "$LOCK_AGE" -ge "$STALE_HOURS" ]; then
-        echo "WARNING: Stale lock file detected (${LOCK_AGE}h old, PID $LOCK_PID not running)"
-        echo "Removing stale lock and continuing..."
-        rm -f "$LOCK_FILE"
-    else
-        echo "WARNING: Lock file exists (PID $LOCK_PID not running, ${LOCK_AGE}h old)"
-        echo "If certain no other session is active: rm $LOCK_FILE"
-        exit 1
-    fi
-fi
-echo $$ > "$LOCK_FILE"  # Create lock with current PID
-
-# 1. Check state file exists and is valid JSON
-jq . .lightwatch_state.json > /dev/null || echo "ERROR: Invalid state file"
-
-# 2. Check current branch matches state
-CURRENT=$(git branch --show-current)
-EXPECTED=$(jq -r '.current_branch' .lightwatch_state.json)
-if [ "$CURRENT" != "$EXPECTED" ]; then
-    echo "WARNING: On branch $CURRENT, state expects $EXPECTED"
-fi
-
-# 3. Check for uncommitted changes
-if ! git diff --quiet; then
-    echo "WARNING: Uncommitted changes detected"
-    git status --short
-fi
-
-# 4. Verify last commit matches state
-LAST_COMMIT=$(git log -1 --format='%H')
-STATE_COMMIT=$(jq -r '.last_commit' .lightwatch_state.json)
-if [ "$LAST_COMMIT" != "$STATE_COMMIT" ] && [ "$STATE_COMMIT" != "" ]; then
-    echo "WARNING: HEAD ($LAST_COMMIT) differs from state ($STATE_COMMIT)"
-fi
-
-# 5. If phase was EXECUTING, verify what's done
-if [ "$(jq -r '.phase_status' .lightwatch_state.json)" == "EXECUTING" ]; then
-    echo "Resuming phase $(jq '.current_phase' .lightwatch_state.json)"
-    echo "Completed: $(jq '.completed_deliverables' .lightwatch_state.json)"
-    echo "Pending: $(jq '.pending_deliverables' .lightwatch_state.json)"
-fi
-```
 Run this checklist before taking any action. Address warnings before proceeding.
 
 **Lock file notes:**
@@ -401,377 +362,34 @@ LightwatchAI2/
 ```
 
 ### CLAUDE.md Content
-```markdown
-# Claude Code Configuration - LightwatchAI2
 
-## ⚠️ CRITICAL: Read This First
+**File:** `docs/references/templates/CLAUDE.md.template`
 
-**Before taking ANY action on session start, you MUST:**
-1. Read the full orchestration prompt:
-   ```bash
-   if [ -f docs/MASTER_PROMPT.md ]; then
-       cat docs/MASTER_PROMPT.md
-   else
-       echo "ERROR: docs/MASTER_PROMPT.md not found"
-       echo "This file should have been created during Phase 0"
-       echo "If starting fresh, copy the original Master_Prompt.md to docs/MASTER_PROMPT.md"
-       exit 1
-   fi
-   ```
-2. Run the session recovery checklist (see below)
-3. Check `.lightwatch_state.json` for current state
+Key sections:
+- Critical first steps (read Master Prompt, run recovery checklist)
+- Session recovery checklist (lock file, state validation)
+- Quick reference (authorship, code style, escalation triggers)
+- Commit message format and examples
 
-The Master Prompt contains all orchestration logic, phase specifications, contracts, and procedures. This CLAUDE.md file contains quick reference only.
-
----
-
-## Session Recovery Checklist
-
-Run this on EVERY session start before taking any action:
-
-```bash
-#!/bin/bash
-# 1. Check state file exists and is valid JSON
-jq . .lightwatch_state.json > /dev/null || { echo "ERROR: Invalid state file"; exit 1; }
-
-# 2. Check for lock file (concurrent execution)
-if [ -f ".lightwatch.lock" ]; then
-    PID=$(cat .lightwatch.lock)
-    if kill -0 "$PID" 2>/dev/null; then
-        echo "ERROR: Another session is running (PID $PID)"
-        exit 1
-    fi
-    rm -f .lightwatch.lock
-fi
-
-# 3. Check current branch matches state
-CURRENT=$(git branch --show-current)
-EXPECTED=$(jq -r '.current_branch' .lightwatch_state.json)
-if [ "$CURRENT" != "$EXPECTED" ]; then
-    echo "WARNING: On branch $CURRENT, state expects $EXPECTED"
-fi
-
-# 4. Check for uncommitted changes
-if ! git diff --quiet; then
-    echo "WARNING: Uncommitted changes detected"
-    git status --short
-fi
-
-# 5. Report current state
-echo "=== Current State ==="
-echo "Phase: $(jq '.current_phase' .lightwatch_state.json)"
-echo "Status: $(jq -r '.phase_status' .lightwatch_state.json)"
-echo "Completed: $(jq '.completed_phases | length' .lightwatch_state.json)/40 phases"
-```
-
----
-
-## Quick Reference
-
-### Commit Authorship (MANDATORY)
-ALL commits must use:
-```bash
-git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com" commit -m "message"
-```
-Claude MUST NOT be listed as commit author under any circumstances.
-
-### Commit Message Format
-See detailed format specification below. Summary: `[PHASE-XX] <type>: <subject>` with Signed-off-by line.
-
-### Code Style
-- C++17 standard
-- 4-space indentation
-- snake_case for functions/variables
-- PascalCase for classes/types
-- UPPER_CASE for constants
-
-### Test Naming Convention
-All test names MUST follow: `test_phase_XX_<component>_<behavior>`
-
-### Pre-Commit Testing (MANDATORY)
-Before EVERY commit:
-```bash
-cmake --build build
-ctest --test-dir build -R "phase_$(printf '%02d' $CURRENT_PHASE)" --output-on-failure
-```
-If either fails, fix before committing.
-
-### Escalation Triggers (STOP and wait for human)
-- Contract change required after Phase 10
-- Performance < 25 tok/s after optimization
-- External dependency seems required
-- Memory > 8GB RAM
-- Two consecutive phase failures
-- Asset download fails all fallbacks
-- Same error 3 times after fix attempts
-- Git push fails 3 consecutive times
-
-### Model Target
-- GPT-2 Small (124M parameters)
-- 12 layers, 768 hidden, 12 heads, 64 head dim
-- 50257 vocab, 1024 context, 3072 FFN
-
-### Key Files
-| Purpose | Location |
-|---------|----------|
-| Full orchestration | `docs/MASTER_PROMPT.md` |
-| Current state | `.lightwatch_state.json` |
-| API contracts | `docs/contracts/*.hpp` |
-| Phase prompts | `docs/prompts/phase-XX-*.md` |
-| Test specs | `docs/test_specs/phase-XX-*.md` |
-| Decisions log | `docs/architecture/DECISIONS.md` |
-| Escalations | `docs/architecture/ESCALATIONS.md` |
-
-### Phase Order
-```
-0 → 0.3 → 0.7 → 0.5 → 0.9 → validate → 1..40 → verify
-```
-
-### State Values
-- `project_status`: IN_PROGRESS | COMPLETE | ESCALATED
-- `phase_status`: NOT_STARTED | EXECUTING | VERIFYING | COMPLETE | FAILED | PARTIAL_FAILURE | ESCALATED
-```
-
-### Setup Instructions
-
-During Phase 0 bootstrap:
-1. Copy the Master Prompt into the repository:
-   ```bash
-   cp /path/to/Master_Prompt.md docs/MASTER_PROMPT.md
-   ```
-2. This ensures the full orchestration logic is always available in the repo
-3. On session resume, Claude Code should read `docs/MASTER_PROMPT.md` first
-
-### Commit Message Format
-
-All commits MUST follow this format:
-
-```
-[PHASE-XX] <type>: <subject>
-
-<body>
-
-Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>
-```
-
-**Type values:**
-- `feat` — New feature or functionality
-- `fix` — Bug fix
-- `test` — Adding or updating tests
-- `docs` — Documentation changes
-- `refactor` — Code restructuring without behavior change
-- `perf` — Performance improvement
-- `chore` — Build system, dependencies, tooling
-
-**Examples:**
-```bash
-# Feature addition
-git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com" \
-    commit -m "[PHASE-03] feat: Implement Tensor reshape and view operations
-
-Add reshape() for copying data to new shape and view() for zero-copy
-reshape when strides permit. Both validate that total elements match.
-
-Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>"
-
-# Bug fix
-git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com" \
-    commit -m "[PHASE-04] fix: Handle unaligned memory in SIMD dot product
-
-AVX2 load instructions require 32-byte alignment. Added scalar fallback
-for the first N elements until aligned, then SIMD for remainder.
-
-Fixes: test_simd_alignment
-
-Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>"
-
-# Test addition
-git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com" \
-    commit -m "[PHASE-06] test: Add tokenizer edge case tests
-
-- test_tokenizer_empty: empty string handling
-- test_tokenizer_emoji: Unicode emoji roundtrip
-- test_tokenizer_long: 2000 token stress test
-
-Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>"
-```
-
-**Rules:**
-1. Subject line ≤ 72 characters
-2. Body wrapped at 72 characters
-3. Blank line between subject and body
-4. Reference test names when fixing test failures
-5. ALWAYS include Signed-off-by line
+See also: `docs/references/examples/commit_messages.md` for commit examples
 
 ### CMakeLists.txt Template
-```cmake
-cmake_minimum_required(VERSION 3.16)
-project(lightwatch VERSION 0.1.0 LANGUAGES CXX)
 
-# C++ Standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+**File:** `docs/references/templates/CMakeLists.txt.template`
 
-# Export compile commands for IDE support
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-# Output directories
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-
-# Compiler warnings
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-Wall -Wextra -Wpedantic)
-elseif(MSVC)
-    add_compile_options(/W4)
-endif()
-
-# JSON library (header-only)
-include(FetchContent)
-FetchContent_Declare(
-    nlohmann_json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.3
-)
-FetchContent_MakeAvailable(nlohmann_json)
-
-# Include directories
-include_directories(${CMAKE_SOURCE_DIR}/include)
-
-# Source files (populated by later phases)
-# add_subdirectory(src)
-
-# Testing
-enable_testing()
-include(CTest)
-add_subdirectory(tests)
-
-# Installation (optional)
-install(DIRECTORY include/ DESTINATION include)
-```
-
-This template provides:
-- C++17 with no extensions
-- Consistent output directories
-- Compiler warnings enabled
-- nlohmann/json via FetchContent
-- Testing infrastructure
-- IDE support via compile_commands.json
+Provides: C++17, output directories, warnings, nlohmann/json via FetchContent, testing infrastructure, IDE support.
 
 ### .gitignore Content
-```gitignore
-# Build directories
-build/
-cmake-build-*/
 
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Compiled objects
-*.o
-*.obj
-*.a
-*.lib
-*.so
-*.dylib
-*.dll
-
-# Executables
-*.exe
-*.out
-
-# CMake generated
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-compile_commands.json
-CTestTestfile.cmake
-Testing/
-
-# Session lock
-.lightwatch.lock
-
-# Large binary files (if weights are downloaded)
-data/weights/*.bin
-data/weights/*.pt
-data/weights/*.safetensors
-
-# macOS
-.DS_Store
-
-# Windows
-Thumbs.db
-```
+**File:** `docs/references/templates/gitignore.template`
 
 ### docs/architecture/DECISIONS.md Template
-```markdown
-# Architectural Decisions
 
-This document records significant architectural decisions made during development.
-
-## Format
-
-Each decision follows this template:
-
-### [YYYY-MM-DD] Decision Title
-
-**Phase:** N (where the decision was made)
-
-**Context:**
-What situation prompted this decision? What constraints existed?
-
-**Options Considered:**
-1. Option A — pros/cons
-2. Option B — pros/cons
-3. Option C — pros/cons
-
-**Decision:**
-What was decided and why?
-
-**Consequences:**
-- Positive: What benefits does this bring?
-- Negative: What tradeoffs were accepted?
-- Phases Affected: Which phases are impacted?
-
----
-
-## Decision Log
-
-(Entries will be added as decisions are made)
-```
+**File:** `docs/references/templates/DECISIONS.md.template`
 
 ### Example Decision Entry
-```markdown
-### [2025-01-15] Use Row-Major Tensor Layout
 
-**Phase:** 03 (Tensor Core)
-
-**Context:**
-Needed to decide between row-major (C-style) and column-major (Fortran-style) memory layout for tensors. This affects cache performance and compatibility with external libraries.
-
-**Options Considered:**
-1. Row-major — Matches C++ array semantics, better for batch processing, standard in PyTorch
-2. Column-major — Better for linear algebra, standard in NumPy/BLAS
-3. Configurable — Maximum flexibility but implementation complexity
-
-**Decision:**
-Row-major layout. Rationale:
-- Matches C++ native arrays
-- PyTorch compatibility (for weight loading)
-- Batch dimension is first, which is common access pattern
-- SIMD vectorization works well with contiguous rows
-
-**Consequences:**
-- Positive: Simpler implementation, good cache locality for inference
-- Negative: May need transpose for some BLAS operations if optional BLAS is enabled
-- Phases Affected: 04 (SIMD must respect layout), 37 (serialization must match PyTorch)
-```
+**File:** `docs/references/examples/decision_entry.md`
 
 ### Acceptance Criteria
 - [ ] `cmake -B build -S .` exits 0
@@ -823,478 +441,17 @@ Full contract specifications are in `docs/contracts/*.hpp.spec` files. During Ph
 
 ## CONTRACT SPECIFICATIONS
 
-Complete API specifications for each contract file. Copy these to `docs/contracts/*.hpp` during Phase 0.3.
-
-### tensor.hpp
-
-```cpp
-// LightwatchAI2 API Contract: Tensor
-// Defined by: Phase 03 | Consumers: 04, 05, 08, 09, 11-19, 21-25, 31-36
-#pragma once
-#include <vector>
-#include <memory>
-#include <cstddef>
-#include <initializer_list>
-
-namespace lightwatch {
-
-using Shape = std::vector<size_t>;
-
-template<typename T>
-class Tensor {
-public:
-    // Construction
-    Tensor();
-    explicit Tensor(const Shape& shape);
-    Tensor(const Shape& shape, const T* data);
-    Tensor(const Shape& shape, std::initializer_list<T> data);
-
-    // Static factories
-    static Tensor zeros(const Shape& shape);
-    static Tensor ones(const Shape& shape);
-    static Tensor full(const Shape& shape, T value);
-    static Tensor randn(const Shape& shape);  // N(0,1)
-    static Tensor rand(const Shape& shape);   // U[0,1)
-
-    // Properties
-    const Shape& shape() const;
-    size_t size(int dim) const;   // Negative dims count from end
-    size_t numel() const;
-    size_t ndim() const;
-    T* data();
-    const T* data() const;
-    bool is_contiguous() const;
-
-    // Element access
-    T& operator()(const std::vector<size_t>& indices);
-    const T& operator()(const std::vector<size_t>& indices) const;
-
-    // Shape operations
-    Tensor reshape(const Shape& new_shape) const;
-    Tensor view(const Shape& new_shape) const;
-    Tensor transpose(int dim0, int dim1) const;
-    Tensor permute(const std::vector<int>& dims) const;
-    Tensor squeeze(int dim = -1) const;
-    Tensor unsqueeze(int dim) const;
-    Tensor slice(int dim, size_t start, size_t end) const;
-    Tensor contiguous() const;
-
-    // Arithmetic (return new tensor)
-    Tensor operator+(const Tensor& other) const;
-    Tensor operator-(const Tensor& other) const;
-    Tensor operator*(const Tensor& other) const;
-    Tensor operator/(const Tensor& other) const;
-    Tensor operator-() const;
-
-    // Scalar arithmetic
-    Tensor operator+(T scalar) const;
-    Tensor operator*(T scalar) const;
-
-    // In-place (return reference)
-    Tensor& fill_(T value);
-    Tensor& zero_();
-    Tensor& add_(const Tensor& other);
-    Tensor& mul_(const Tensor& other);
-
-    // Reductions
-    Tensor sum(int dim = -1, bool keepdim = false) const;
-    Tensor mean(int dim = -1, bool keepdim = false) const;
-    Tensor max(int dim = -1, bool keepdim = false) const;
-    T item() const;  // Scalar tensors only
-
-    // Math functions
-    Tensor exp() const;
-    Tensor log() const;
-    Tensor sqrt() const;
-    Tensor abs() const;
-    Tensor pow(T exponent) const;
-
-    Tensor clone() const;
-
-private:
-    Shape shape_;
-    std::vector<size_t> strides_;
-    std::shared_ptr<T[]> data_;
-    size_t offset_ = 0;
-};
-
-// Free functions
-template<typename T> Tensor<T> matmul(const Tensor<T>& a, const Tensor<T>& b);
-template<typename T> Tensor<T> concat(const std::vector<Tensor<T>>& tensors, int dim);
-template<typename T> Tensor<T> stack(const std::vector<Tensor<T>>& tensors, int dim);
-
-}  // namespace lightwatch
-```
-
-### autograd.hpp
-
-```cpp
-// LightwatchAI2 API Contract: Autograd
-// Defined by: Phase 05 | Consumers: 08, 11-19, 21-25, 31
-#pragma once
-#include "tensor.hpp"
-#include <memory>
-#include <vector>
-#include <functional>
-
-namespace lightwatch::autograd {
-
-class Function;
-
-class Variable {
-public:
-    Variable();
-    explicit Variable(Tensor<float> data, bool requires_grad = false);
-
-    // Data access
-    Tensor<float>& data();
-    const Tensor<float>& data() const;
-
-    // Gradient access
-    Tensor<float>& grad();
-    const Tensor<float>& grad() const;
-    bool has_grad() const;
-    bool requires_grad() const;
-    void set_requires_grad(bool requires);
-    void zero_grad();
-
-    // Shape delegation
-    const Shape& shape() const;
-    size_t numel() const;
-    size_t ndim() const;
-
-    // Backpropagation
-    void backward();
-    void backward(const Tensor<float>& grad_output);
-
-    // Graph management
-    void set_grad_fn(std::shared_ptr<Function> fn);
-    std::shared_ptr<Function> grad_fn() const;
-    Variable detach() const;
-    void retain_grad();
-
-private:
-    Tensor<float> data_;
-    Tensor<float> grad_;
-    bool requires_grad_ = false;
-    bool has_grad_ = false;
-    std::shared_ptr<Function> grad_fn_;
-};
-
-class Function {
-public:
-    virtual ~Function() = default;
-    virtual std::vector<Tensor<float>> backward(const Tensor<float>& grad_output) = 0;
-
-protected:
-    void save_for_backward(const Variable& v);
-    std::vector<Variable> saved_variables_;
-};
-
-// Differentiable operations
-namespace ops {
-    Variable add(const Variable& a, const Variable& b);
-    Variable sub(const Variable& a, const Variable& b);
-    Variable mul(const Variable& a, const Variable& b);
-    Variable div(const Variable& a, const Variable& b);
-    Variable neg(const Variable& x);
-    Variable matmul(const Variable& a, const Variable& b);
-    Variable transpose(const Variable& x, int dim0, int dim1);
-
-    // Activations
-    Variable relu(const Variable& x);
-    Variable gelu(const Variable& x);
-    Variable sigmoid(const Variable& x);
-    Variable tanh(const Variable& x);
-    Variable softmax(const Variable& x, int dim);
-    Variable log_softmax(const Variable& x, int dim);
-
-    // Reductions
-    Variable sum(const Variable& x, int dim = -1, bool keepdim = false);
-    Variable mean(const Variable& x, int dim = -1, bool keepdim = false);
-
-    // Shape
-    Variable reshape(const Variable& x, const Shape& new_shape);
-    Variable squeeze(const Variable& x, int dim = -1);
-    Variable unsqueeze(const Variable& x, int dim);
-    Variable slice(const Variable& x, int dim, size_t start, size_t end);
-
-    // Misc
-    Variable dropout(const Variable& x, float p, bool training);
-    Variable layer_norm(const Variable& x, const Variable& weight,
-                        const Variable& bias, float eps = 1e-5);
-}
-
-class NoGradGuard {
-public:
-    NoGradGuard();
-    ~NoGradGuard();
-private:
-    static thread_local int guard_count_;
-};
-
-bool is_grad_enabled();
-
-}  // namespace lightwatch::autograd
-```
-
-### tokenizer.hpp
-
-```cpp
-// LightwatchAI2 API Contract: Tokenizer
-// Defined by: Phase 06-07 | Consumers: 08, 27, 38
-#pragma once
-#include <string>
-#include <vector>
-#include <unordered_map>
-#include <cstdint>
-
-namespace lightwatch::tokenizer {
-
-using TokenId = int32_t;
-
-struct SpecialTokens {
-    static constexpr TokenId EOS = 50256;  // <|endoftext|>
-    static constexpr TokenId PAD = 50256;  // Same as EOS for GPT-2
-};
-
-class Vocabulary {
-public:
-    Vocabulary();
-
-    TokenId token_to_id(const std::string& token) const;
-    std::string id_to_token(TokenId id) const;
-    bool contains(const std::string& token) const;
-    size_t size() const;
-
-    TokenId eos_id() const;
-    TokenId pad_id() const;
-
-    static Vocabulary from_json(const std::string& path);  // encoder.json
-
-private:
-    std::unordered_map<std::string, TokenId> token_to_id_;
-    std::vector<std::string> id_to_token_;
-};
-
-class BPETokenizer {
-public:
-    BPETokenizer();
-
-    std::vector<TokenId> encode(const std::string& text) const;
-    std::string decode(const std::vector<TokenId>& tokens) const;
-
-    std::vector<std::vector<TokenId>> encode_batch(
-        const std::vector<std::string>& texts) const;
-
-    const Vocabulary& vocab() const;
-    size_t vocab_size() const;  // Returns 50257
-    TokenId eos_id() const;
-    TokenId pad_id() const;
-
-    static BPETokenizer from_files(const std::string& vocab_path,
-                                    const std::string& merges_path);
-    static BPETokenizer gpt2(const std::string& vocab_dir = "data/vocab");
-
-private:
-    Vocabulary vocab_;
-    std::vector<std::pair<std::string, std::string>> merges_;
-    struct PairHash {
-        size_t operator()(const std::pair<std::string,std::string>& p) const;
-    };
-    std::unordered_map<std::pair<std::string,std::string>, int, PairHash> merge_ranks_;
-};
-
-}  // namespace lightwatch::tokenizer
-```
-
-### module.hpp
-
-```cpp
-// LightwatchAI2 API Contract: Module
-// Defined by: Phase 11 | Consumers: 12-19, 31
-#pragma once
-#include "autograd.hpp"
-#include <vector>
-#include <string>
-#include <unordered_map>
-#include <memory>
-
-namespace lightwatch::nn {
-
-using autograd::Variable;
-
-class Module {
-public:
-    virtual ~Module() = default;
-
-    virtual Variable forward(const Variable& input) = 0;
-
-    std::vector<Variable*> parameters();
-    std::vector<std::pair<std::string, Variable*>> named_parameters();
-    size_t num_parameters() const;
-
-    void train(bool mode = true);
-    void eval();
-    bool is_training() const;
-
-    void zero_grad();
-
-    std::unordered_map<std::string, Tensor<float>> state_dict() const;
-    void load_state_dict(const std::unordered_map<std::string, Tensor<float>>& dict);
-
-protected:
-    bool training_ = true;
-    void register_parameter(const std::string& name, Variable& param);
-    void register_module(const std::string& name, std::shared_ptr<Module> module);
-
-private:
-    std::vector<std::pair<std::string, Variable*>> parameters_;
-    std::vector<std::pair<std::string, std::shared_ptr<Module>>> submodules_;
-};
-
-class Linear : public Module {
-public:
-    Linear(size_t in_features, size_t out_features, bool bias = true);
-    Variable forward(const Variable& input) override;
-
-    Variable weight;  // Shape: [out_features, in_features]
-    Variable bias;    // Shape: [out_features]
-};
-
-class LayerNorm : public Module {
-public:
-    LayerNorm(size_t normalized_shape, float eps = 1e-5);
-    Variable forward(const Variable& input) override;
-
-    Variable weight;  // Shape: [normalized_shape]
-    Variable bias;    // Shape: [normalized_shape]
-private:
-    float eps_;
-};
-
-class Embedding : public Module {
-public:
-    Embedding(size_t num_embeddings, size_t embedding_dim);
-    Variable forward(const Variable& input) override;
-    Variable forward(const Tensor<int32_t>& indices);
-
-    Variable weight;  // Shape: [num_embeddings, embedding_dim]
-};
-
-class Dropout : public Module {
-public:
-    explicit Dropout(float p = 0.1);
-    Variable forward(const Variable& input) override;
-private:
-    float p_;
-};
-
-}  // namespace lightwatch::nn
-```
-
-### optimizer.hpp
-
-```cpp
-// LightwatchAI2 API Contract: Optimizer
-// Defined by: Phase 22 | Consumers: 23-26, 29
-#pragma once
-#include "autograd.hpp"
-#include <vector>
-#include <unordered_map>
-
-namespace lightwatch::optim {
-
-using autograd::Variable;
-
-struct OptimizerOptions {
-    float lr = 1e-3;
-    float weight_decay = 0.0;
-};
-
-class Optimizer {
-public:
-    explicit Optimizer(std::vector<Variable*> params, OptimizerOptions opts = {});
-    virtual ~Optimizer() = default;
-
-    virtual void step() = 0;
-    virtual void zero_grad();
-
-    float get_lr() const;
-    void set_lr(float lr);
-
-protected:
-    std::vector<Variable*> params_;
-    OptimizerOptions options_;
-    std::unordered_map<Variable*, std::unordered_map<std::string, Tensor<float>>> state_;
-};
-
-struct SGDOptions : OptimizerOptions {
-    float momentum = 0.0;
-    bool nesterov = false;
-};
-
-class SGD : public Optimizer {
-public:
-    SGD(std::vector<Variable*> params, SGDOptions opts = {});
-    void step() override;
-private:
-    SGDOptions opts_;
-};
-
-struct AdamOptions : OptimizerOptions {
-    float beta1 = 0.9;
-    float beta2 = 0.999;
-    float eps = 1e-8;
-};
-
-class Adam : public Optimizer {
-public:
-    Adam(std::vector<Variable*> params, AdamOptions opts = {});
-    void step() override;
-private:
-    AdamOptions opts_;
-    int step_count_ = 0;
-};
-
-class AdamW : public Adam {
-public:
-    AdamW(std::vector<Variable*> params, AdamOptions opts = {});
-    void step() override;
-};
-
-class LRScheduler {
-public:
-    explicit LRScheduler(Optimizer& optimizer);
-    virtual ~LRScheduler() = default;
-    virtual void step() = 0;
-    float get_last_lr() const;
-protected:
-    Optimizer& optimizer_;
-    int step_count_ = 0;
-    float base_lr_;
-};
-
-class CosineAnnealingLR : public LRScheduler {
-public:
-    CosineAnnealingLR(Optimizer& optimizer, int T_max, float eta_min = 0.0);
-    void step() override;
-private:
-    int T_max_;
-    float eta_min_;
-};
-
-class WarmupLR : public LRScheduler {
-public:
-    WarmupLR(Optimizer& optimizer, int warmup_steps, float start_factor = 0.0);
-    void step() override;
-private:
-    int warmup_steps_;
-    float start_factor_;
-};
-
-}  // namespace lightwatch::optim
-```
+Complete API specifications are in `docs/references/contracts/`:
+
+| Contract | File | Defined In | Consumers |
+|----------|------|------------|-----------|
+| Tensor | `tensor.hpp.spec` | Phase 03 | 04, 05, 08, 09, 11-19, 21-25, 31-36 |
+| Autograd | `autograd.hpp.spec` | Phase 05 | 08, 11-19, 21-25, 31 |
+| Tokenizer | `tokenizer.hpp.spec` | Phase 06-07 | 08, 27, 38 |
+| Module | `module.hpp.spec` | Phase 11 | 12-19, 31 |
+| Optimizer | `optimizer.hpp.spec` | Phase 22 | 23-26, 29 |
+
+During Phase 0.3, read each `.spec` file and create the corresponding `.hpp` file in `docs/contracts/`.
 
 ---
 
@@ -1336,70 +493,10 @@ If primary HuggingFace URLs fail, try in order:
 | encoder.json | huggingface.co/gpt2/raw/main/encoder.json | openaipublic.blob.core.windows.net/gpt-2/encodings/main/encoder.json |
 
 ### Acquisition Script: scripts/acquire_assets.sh
-```bash
-#!/bin/bash
-set -e
 
-echo "=== Acquiring GPT-2 Tokenizer Assets ==="
+**File:** `docs/references/scripts/acquire_assets.sh`
 
-# Check for required tools
-if ! command -v curl &> /dev/null; then
-    echo "ERROR: curl is required but not installed"
-    exit 1
-fi
-
-if ! command -v jq &> /dev/null; then
-    echo "ERROR: jq is required but not installed"
-    exit 1
-fi
-
-mkdir -p data/vocab
-
-try_download() {
-    local name=$1
-    shift
-    for url in "$@"; do
-        echo "Trying $url..."
-        if curl -fsSL --connect-timeout 10 "$url" -o "data/vocab/$name"; then
-            echo "Downloaded $name"
-            return 0
-        fi
-        echo "Failed, trying next URL..."
-    done
-    echo "ERROR: Failed to download $name from all sources"
-    return 1
-}
-
-try_download "vocab.bpe" \
-    "https://huggingface.co/gpt2/raw/main/vocab.bpe" \
-    "https://openaipublic.blob.core.windows.net/gpt-2/encodings/main/vocab.bpe"
-
-try_download "encoder.json" \
-    "https://huggingface.co/gpt2/raw/main/encoder.json" \
-    "https://openaipublic.blob.core.windows.net/gpt-2/encodings/main/encoder.json"
-
-# Validate
-echo ""
-echo "=== Validating Assets ==="
-
-if [ ! -s data/vocab/vocab.bpe ]; then
-    echo "ERROR: vocab.bpe is empty or missing"
-    exit 1
-fi
-
-VOCAB_SIZE=$(jq 'length' data/vocab/encoder.json)
-if [ "$VOCAB_SIZE" -ne 50257 ]; then
-    echo "ERROR: encoder.json has $VOCAB_SIZE tokens, expected 50257"
-    exit 1
-fi
-
-MERGE_COUNT=$(wc -l < data/vocab/vocab.bpe | tr -d ' ')
-echo "vocab.bpe: $MERGE_COUNT lines"
-echo "encoder.json: $VOCAB_SIZE tokens"
-
-echo ""
-echo "=== Assets Acquired Successfully ==="
-```
+Features: Tool checking (curl, jq), fallback URLs, asset validation.
 
 ### Acceptance Criteria
 - [ ] `test -f data/vocab/vocab.bpe && test -s data/vocab/vocab.bpe`
@@ -1459,67 +556,9 @@ python3 scripts/validate_prompts.py
 
 ### Phase Prompt Template (MANDATORY)
 
-Every generated prompt MUST follow this exact structure:
+**File:** `docs/references/templates/phase_prompt.md.template`
 
-~~~markdown
-# Phase XX: <Title>
-
-## Objective
-<1-2 sentences: what this phase delivers>
-
-## Prerequisites
-| Phase | Required Outputs |
-|-------|------------------|
-| NN    | Specific files/symbols needed from that phase |
-
-## Inputs (APIs consumed from prior phases)
-| Source Phase | File | Symbols Used |
-|--------------|------|--------------|
-| NN           | path/to/file.hpp | ClassName, function_name |
-
-## Outputs (Files produced for future phases)
-| File | Public Symbols | Consumed By |
-|------|----------------|-------------|
-| path/to/new/file.hpp | ClassName | Phase NN, MM |
-
-## Specification
-
-### Data Structures
-```cpp
-// Exact class/struct definitions
-```
-
-### Function Signatures
-```cpp
-// Exact C++ signatures for ALL public API
-```
-
-### Algorithmic Requirements
-<Pseudocode or step-by-step logic>
-
-### Performance Constraints
-<Measurable targets if applicable>
-
-## Required Tests
-| Test Name | Input | Expected Output |
-|-----------|-------|-----------------|
-| `test_function_name` | Concrete input | Concrete assertion |
-
-## Acceptance Criteria
-- [ ] `<shell command that exits 0 on success>`
-- [ ] `<another shell command>`
-
-## Estimated Scope
-| Metric | Value |
-|--------|-------|
-| Lines of code | XXX-XXX |
-| New source files | N |
-| New test files | N |
-| Complexity | LOW/MEDIUM/HIGH |
-
-## Notes
-<Edge cases, risks, design decisions>
-~~~
+Every generated prompt MUST follow the exact structure in the template file.
 
 ### Template Rules
 1. **Prerequisites**: Must exactly match `PHASE_DEPS[N]` from the dependency table
@@ -1595,30 +634,8 @@ Validate that the entire toolchain works before starting real implementation. Ca
 ### Procedure
 
 1. **Create minimal test project:**
-```cpp
-// tests/smoke/smoke_test.cpp
-#include <iostream>
-#include <vector>
-#include <cmath>
-
-int main() {
-    // Test basic C++17 features
-    std::vector<float> v = {1.0f, 2.0f, 3.0f, 4.0f};
-
-    float sum = 0;
-    for (auto x : v) sum += x;
-
-    // Test floating point operations
-    float expected = 10.0f;
-    if (std::abs(sum - expected) > 1e-6f) {
-        std::cerr << "ERROR: sum = " << sum << ", expected " << expected << std::endl;
-        return 1;
-    }
-
-    std::cout << "Smoke test passed: sum = " << sum << std::endl;
-    return 0;
-}
-```
+> 📁 **Reference:** [`docs/references/examples/smoke_test.cpp`](references/examples/smoke_test.cpp)
+> Copy this file to `tests/smoke/smoke_test.cpp`
 
 2. **Add to CMakeLists.txt:**
 ```cmake
@@ -1856,153 +873,23 @@ This enables phase-specific filtering: `ctest -R "phase_03"`
 
 ## TEST SPEC FILE TEMPLATES
 
-These templates define the complete test specifications for complex phases. During Phase 0.5, copy these to `docs/test_specs/phase-XX-*.md` files BEFORE generating phase prompts.
+Test specifications for complex phases are in `docs/references/test_specs/`:
 
-### docs/test_specs/phase-03-tensor.md
+| Phase | File | Tests |
+|-------|------|-------|
+| 03 | `phase-03-tensor.md` | 12 |
+| 04 | `phase-04-simd.md` | 6 |
+| 05 | `phase-05-autograd.md` | 10 |
+| 06 | `phase-06-tokenizer.md` | 10 |
+| 15 | `phase-15-attention.md` | 8 |
+| 16 | `phase-16-mha.md` | 6 |
+| 19 | `phase-19-decoder.md` | 5 |
+| 29 | `phase-29-training.md` | 6 |
+| 31 | `phase-31-gpt.md` | 6 |
+| 36 | `phase-36-kvcache.md` | 5 |
+| 38 | `phase-38-cli.md` | 8 |
 
-```markdown
-# Phase 03: Tensor Core - Test Specifications
-
-**Complexity:** HIGH
-**Minimum Tests Required:** 12
-
-## Required Tests
-
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_phase_03_tensor_construction` | `Tensor<float> t({2,3,4})` | `t.numel()==24`, `t.ndim()==3`, `t.shape()=={2,3,4}` |
-| `test_phase_03_tensor_zeros` | `Tensor<float>::zeros({3,3})` | All 9 elements == 0.0f |
-| `test_phase_03_tensor_ones` | `Tensor<float>::ones({2,2})` | All 4 elements == 1.0f |
-| `test_phase_03_tensor_randn` | `Tensor<float>::randn({1000})` | Mean ∈ [-0.1, 0.1], Std ∈ [0.9, 1.1] |
-| `test_phase_03_tensor_matmul_2d` | `A{2,3}=[1..6], B{3,4}=[1..12]` | Result shape `{2,4}`, `C[0,0]==38.0f` |
-| `test_phase_03_tensor_matmul_batch` | `A{2,2,3}, B{2,3,4}` randn | Result shape `{2,2,4}`, matches loop impl |
-| `test_phase_03_tensor_broadcast_add` | `A{2,3}=[1..6] + B{3}=[10,20,30]` | `C[0,:]={11,22,33}`, `C[1,:]={14,25,36}` |
-| `test_phase_03_tensor_broadcast_mul` | `A{2,1,4}=1.0 * B{3,1}=[2,3,4]` | Result shape `{2,3,4}`, all rows scaled |
-| `test_phase_03_tensor_slice` | `T{10,20}.slice(0, 2, 5)` | Result shape `{3,20}`, `R[0,:]==T[2,:]` |
-| `test_phase_03_tensor_transpose` | `T{2,3}=[1..6].transpose(0,1)` | Result shape `{3,2}`, `R[0,1]==T[1,0]==4` |
-| `test_phase_03_tensor_contiguous` | `T{4,4}.slice(0,1,3)` (non-contig) | After `.contiguous()`: `is_contiguous()==true` |
-| `test_phase_03_tensor_reduction_sum` | `T{2,3}=[1,2,3,4,5,6].sum(1)` | Result `{2}`, values `[6.0, 15.0]` |
-
-## Implementation Notes
-
-- All operations must handle edge cases: empty tensors, single-element tensors
-- Broadcasting follows NumPy rules (right-align shapes, expand dims of size 1)
-- Tolerance for floating-point comparisons: 1e-5
-```
-
-### docs/test_specs/phase-05-autograd.md
-
-```markdown
-# Phase 05: Autograd Engine - Test Specifications
-
-**Complexity:** HIGH
-**Minimum Tests Required:** 10
-
-## Required Tests
-
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_phase_05_autograd_add` | `a=Var(2.0,grad=T), b=Var(3.0,grad=T), c=a+b, c.backward()` | `a.grad==1.0`, `b.grad==1.0` |
-| `test_phase_05_autograd_mul` | `a=Var(2.0,grad=T), b=Var(3.0,grad=T), c=a*b, c.backward()` | `a.grad==3.0`, `b.grad==2.0` |
-| `test_phase_05_autograd_matmul` | `A{2,3}=randn, B{3,4}=randn, C=A@B, C.sum().backward()` | `A.grad.shape=={2,3}`, numerical grad check (tol 1e-4) |
-| `test_phase_05_autograd_chain` | `a{2,2}=randn, b{2,2}=randn, d=relu(a@b+1.0), d.sum().backward()` | All inputs have `.has_grad()==true` |
-| `test_phase_05_autograd_no_grad` | `a=Var(2.0,grad=F), b=Var(3.0,grad=T), c=a*b` | `a.has_grad()==false`, `b.has_grad()==true` |
-| `test_phase_05_autograd_accumulation` | `a=Var(2.0,grad=T), b=a*3, c=a*4, (b+c).backward()` | `a.grad==7.0` (gradients accumulate) |
-| `test_phase_05_autograd_detach` | `a=Var(2.0,grad=T), b=a.detach()` | `b.grad_fn()==nullptr`, `b.data()==a.data()` |
-| `test_phase_05_autograd_relu_grad` | `x=Var([-1,0,1,2],grad=T), y=relu(x), y.sum().backward()` | `x.grad==[0,0,1,1]` |
-| `test_phase_05_autograd_softmax_grad` | `x=Var([1,2,3],grad=T), y=softmax(x,0), y[1].backward()` | Jacobian matches numerical diff (tol 1e-4) |
-| `test_phase_05_autograd_no_grad_guard` | Inside `NoGradGuard{}`, create `c=a*b` | `c.grad_fn()==nullptr` regardless of input grad flags |
-
-## Implementation Notes
-
-- Numerical gradient checking: `(f(x+h) - f(x-h)) / 2h` with `h=1e-4`
-- Gradient accumulation is the default (call `zero_grad()` to reset)
-- NoGradGuard must be thread-safe (use thread_local counter)
-```
-
-### docs/test_specs/phase-06-tokenizer.md
-
-```markdown
-# Phase 06: BPE Tokenizer - Test Specifications
-
-**Complexity:** MEDIUM
-**Minimum Tests Required:** 10
-
-## Required Tests
-
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_phase_06_tokenizer_roundtrip` | `"Hello, world!"` | `decode(encode(x)) == "Hello, world!"` |
-| `test_phase_06_tokenizer_special` | `tokenizer.eos_id()` | Returns `50256` |
-| `test_phase_06_tokenizer_unicode` | `"日本語テスト"` | Non-empty token vector, no crash |
-| `test_phase_06_tokenizer_empty` | `""` | Returns empty `vector<TokenId>{}` |
-| `test_phase_06_tokenizer_vocab_size` | `tokenizer.vocab_size()` | Returns `50257` |
-| `test_phase_06_tokenizer_whitespace` | `"  hello   world  "` | Roundtrip preserves exact whitespace |
-| `test_phase_06_tokenizer_numbers` | `"12345 67890"` | Roundtrip exact match |
-| `test_phase_06_tokenizer_long_text` | 10KB random ASCII text | No crash, all token IDs in `[0, 50256]` |
-| `test_phase_06_tokenizer_emoji` | `"Hello 🌍🚀 World"` | Roundtrip preserves emojis exactly |
-| `test_phase_06_tokenizer_newlines` | `"line1\nline2\r\nline3"` | Roundtrip exact match |
-
-## Implementation Notes
-
-- GPT-2 uses byte-level BPE (handles arbitrary UTF-8)
-- Vocab files: `encoder.json` (50257 entries), `vocab.bpe` (50000 merges)
-- No UNK token — unknown bytes encoded as byte tokens (e.g., `<0xFF>`)
-```
-
-### docs/test_specs/phase-15-attention.md
-
-```markdown
-# Phase 15: Single-Head Attention - Test Specifications
-
-**Complexity:** HIGH
-**Minimum Tests Required:** 8
-
-## Required Tests
-
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_phase_15_attention_shape` | `Q,K,V all {2,12,64,64}` | Output shape `{2,12,64,64}` |
-| `test_phase_15_attention_causal` | `S=4, query at pos 2` | Attention weights: `w[3]==0.0` (future masked) |
-| `test_phase_15_attention_softmax` | `S=8, any Q,K,V` | Each row of attention weights sums to 1.0 (tol 1e-5) |
-| `test_phase_15_attention_gradient` | `Q,K,V {1,1,4,8} randn` | Numerical gradient check passes (tol 1e-3) |
-| `test_phase_15_attention_scale` | `d_k=64` | Pre-softmax scores scaled by `1/8.0` (sqrt(64)) |
-| `test_phase_15_attention_mask_inf` | Masked position `K[0,0,3,:]=999.0` | Output unaffected by masked position values |
-| `test_phase_15_attention_single_token` | `S=1, Q,K,V {1,1,1,64}` | Output shape `{1,1,1,64}`, no NaN |
-| `test_phase_15_attention_long_sequence` | `S=1024, B=1, H=1, D=64` | Completes without OOM, output shape correct |
-
-## Implementation Notes
-
-- Attention formula: `softmax(Q @ K.T / sqrt(d_k) + mask) @ V`
-- Causal mask: `-inf` for positions where `j > i`
-- Use `-1e9` instead of `-inf` to avoid NaN in softmax gradients
-```
-
-### docs/test_specs/phase-31-gpt.md
-
-```markdown
-# Phase 31: GPT Architecture - Test Specifications
-
-**Complexity:** HIGH
-**Minimum Tests Required:** 6
-
-## Required Tests
-
-| Test | Input | Expected |
-|------|-------|----------|
-| `test_phase_31_gpt_forward_shape` | `input_ids {2, 16}` (batch=2, seq=16) | Output logits shape `{2, 16, 50257}` |
-| `test_phase_31_gpt_causal` | Seq `[A,B,C,D]`, compute logits | `logits[2]` (for C) identical whether D present or not |
-| `test_phase_31_gpt_parameter_count` | GPT-2 Small config | Total params in `[118M, 130M]` (~124M ± 5%) |
-| `test_phase_31_gpt_gradient` | Forward + backward on random input | All named parameters have non-zero `.grad` |
-| `test_phase_31_gpt_embedding_tied` | Check `wte.weight` and `lm_head.weight` | Same underlying data pointer |
-| `test_phase_31_gpt_layer_order` | Hook each layer, forward pass | Layers execute in order 0,1,2,...,11 |
-
-## Implementation Notes
-
-- GPT-2 Small config: 12 layers, 768 hidden, 12 heads, 50257 vocab, 1024 ctx
-- Parameter count breakdown: wte(38.6M) + wpe(0.8M) + 12*layer(7.1M) + ln_f(1.5K) ≈ 124M
-- Embedding tying: `lm_head.weight = wte.weight` (shared, not copied)
-```
+During Phase 0.5, copy these to `docs/test_specs/` BEFORE generating phase prompts.
 
 ---
 
@@ -2024,19 +911,7 @@ These templates define the complete test specifications for complex phases. Duri
 | Metric | Generated tokens / wall-clock seconds |
 
 ### Measurement Method
-```cpp
-// Pseudocode
-for (int i = 0; i < warmup; i++) generate(prompt, 128);  // Discard
-
-auto start = high_resolution_clock::now();
-for (int i = 0; i < iterations; i++) {
-    generate(prompt, 128);
-}
-auto end = high_resolution_clock::now();
-
-double seconds = duration<double>(end - start).count();
-double tokens_per_second = (iterations * 128) / seconds;
-```
+> 📁 **Reference:** [`docs/references/examples/benchmark_loop.cpp`](references/examples/benchmark_loop.cpp)
 
 ### Performance Thresholds
 | Level | tok/s | Action |
@@ -2055,54 +930,16 @@ double tokens_per_second = (iterations * 128) / seconds;
     --json
 ```
 
-Expected JSON output:
-```json
-{
-    "prompt_tokens": 128,
-    "generated_tokens": 128,
-    "iterations": 100,
-    "total_seconds": 2.56,
-    "tokens_per_second": 50.0,
-    "tokens_per_iteration": 128,
-    "hardware": "x86-64 AVX2"
-}
-```
+Expected JSON output follows [`docs/references/schemas/cli_output.schema.json`](references/schemas/cli_output.schema.json)
 
 ---
 
 ## PHASE 38 OBSERVABILITY NOTE
 
-The CLI's `--json` output mode serves as the foundation for structured observability. When `--json` is specified:
+The CLI's `--json` output mode serves as the foundation for structured observability. Output formats are defined in:
 
-### generate command output:
-```json
-{
-    "command": "generate",
-    "prompt": "<input>",
-    "prompt_tokens": 128,
-    "generated_tokens": 64,
-    "total_duration_ms": 1240,
-    "first_token_ms": 89,
-    "tokens_per_second": 51.6,
-    "stop_reason": "eos",
-    "seed": 42
-}
-```
-
-### benchmark command output:
-```json
-{
-    "command": "benchmark",
-    "prompt_tokens": 128,
-    "generated_tokens": 128,
-    "iterations": 100,
-    "warmup_iterations": 5,
-    "total_seconds": 2.48,
-    "tokens_per_second": 51.6,
-    "p50_latency_ms": 24.1,
-    "p99_latency_ms": 31.2
-}
-```
+> 📁 **Reference:** [`docs/references/schemas/cli_output.schema.json`](references/schemas/cli_output.schema.json)
+> Defines `generate_output` and `benchmark_output` JSON structures.
 
 This structured output enables:
 1. Scripted testing and CI integration
@@ -2330,27 +1167,8 @@ git push origin main 2>&1 | tee /tmp/push_error.txt
 | Connection timeout | Network issue | Retry up to 3 times with 10s delay |
 
 ### 3. Retry Logic
-```bash
-push_with_retry() {
-    local max_attempts=3
-    local attempt=1
 
-    while [ $attempt -le $max_attempts ]; do
-        echo "Push attempt $attempt/$max_attempts..."
-        if git push origin main 2>&1; then
-            echo "Push succeeded"
-            return 0
-        fi
-
-        echo "Push failed, waiting 60s before retry..."
-        sleep 60
-        attempt=$((attempt + 1))
-    done
-
-    echo "ERROR: Push failed after $max_attempts attempts"
-    return 1
-}
-```
+**File:** `docs/references/scripts/push_with_retry.sh`
 
 ### 4. Escalation
 If push fails after 3 retries OR encounters auth error:
@@ -2382,44 +1200,8 @@ These phases require extended validation before proceeding. Do not advance past 
 | Complete | 40 | Full end-to-end generation works |
 
 ### Checkpoint 10: Foundation Verification
-```bash
-# Run foundation integration tests
-ctest -R "integration_foundation" --output-on-failure
-
-# Verify tensor-autograd integration
-./build/bin/test_tensor_autograd
-
-# Verify tokenizer produces valid token IDs
-./build/bin/test_tokenizer --vocab data/vocab/encoder.json
-
-# Memory baseline test (Linux/macOS)
-# Creates a 512x768 tensor, performs matmul, checks RSS < 50MB
-if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    MEMORY_OUTPUT=$(/usr/bin/time -v ./build/bin/test_tensor_memory_baseline 2>&1)
-    MAX_RSS=$(echo "$MEMORY_OUTPUT" | grep "Maximum resident set size" | awk '{print $6}')
-    if [ "$MAX_RSS" -gt 51200 ]; then
-        echo "ERROR: Memory baseline ${MAX_RSS}KB exceeds 50MB limit"
-        exit 1
-    fi
-    echo "Memory baseline: ${MAX_RSS}KB (limit: 51200KB)"
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-    MEMORY_OUTPUT=$(/usr/bin/time -l ./build/bin/test_tensor_memory_baseline 2>&1)
-    MAX_RSS_BYTES=$(echo "$MEMORY_OUTPUT" | grep "maximum resident set size" | awk '{print $1}')
-    MAX_RSS=$((MAX_RSS_BYTES / 1024))
-    if [ "$MAX_RSS" -gt 51200 ]; then
-        echo "ERROR: Memory baseline ${MAX_RSS}KB exceeds 50MB limit"
-        exit 1
-    fi
-    echo "Memory baseline: ${MAX_RSS}KB (limit: 51200KB)"
-fi
-
-# Memory leak check (if valgrind available)
-if command -v valgrind &> /dev/null; then
-    valgrind --leak-check=full --error-exitcode=1 \
-        ./build/bin/test_tensor_basic 2>&1 | tail -20
-    echo "Valgrind memory leak check passed"
-fi
-```
+> 📁 **Reference:** [`docs/references/scripts/checkpoint_10.sh`](references/scripts/checkpoint_10.sh)
+> Tests: tensor-autograd integration, tokenizer, memory baseline (<50MB RSS), valgrind leak check
 
 **Memory baseline test requirements (Phase 05):**
 - `test_tensor_memory_baseline` creates 512x768 float32 tensor (~1.5MB)
@@ -2428,28 +1210,12 @@ fi
 - No external BLAS calls in this test
 
 ### Checkpoint 20: Neural Core Verification
-```bash
-# Build a 2-layer MLP and verify forward/backward
-./build/bin/test_mlp_integration
-
-# Gradient check: numerical vs analytical (tolerance 1e-5)
-./build/bin/test_gradient_check --tolerance 1e-5
-
-# Attention mask verification
-./build/bin/test_attention_causal
-```
+> 📁 **Reference:** [`docs/references/scripts/checkpoint_20.sh`](references/scripts/checkpoint_20.sh)
+> Tests: MLP integration, gradient check (tolerance 1e-5), causal attention mask
 
 ### Checkpoint 30: Training Verification
-```bash
-# Overfit test: 10 samples, should reach <0.01 loss
-./build/bin/test_overfit --samples 10 --max-epochs 1000 --target-loss 0.01
-
-# Checkpoint save/load
-./build/bin/test_checkpoint_roundtrip
-
-# LR scheduler verification
-./build/bin/test_lr_schedule --warmup 100 --total 1000
-```
+> 📁 **Reference:** [`docs/references/scripts/checkpoint_30.sh`](references/scripts/checkpoint_30.sh)
+> Tests: overfit (10 samples → <0.01 loss), checkpoint roundtrip, LR scheduler
 
 ### Checkpoint 40: Final Verification
 Run the full completion criteria script (see COMPLETION CRITERIA).
@@ -2464,23 +1230,8 @@ If Phase N reveals architectural issues in Phase M (where M < N):
 All tests must pass before refactoring.
 
 ### 2. Document the Issue
-Add entry to `docs/architecture/DECISIONS.md`:
-```markdown
-## Decision: [YYYY-MM-DD] - Refactoring Phase M from Phase N
-
-### Problem
-<What was discovered during Phase N implementation>
-
-### Impact
-- Phases affected: M, [list any phases between M and N that depend on M]
-- Breaking changes: [list signature changes]
-
-### Solution
-<What will change in Phase M>
-
-### Migration
-<Steps to update dependent code>
-```
+Add entry to `docs/architecture/DECISIONS.md` using the decision entry format:
+> 📁 **Reference:** [`docs/references/examples/decision_entry.md`](references/examples/decision_entry.md)
 
 ### 3. Create Refactoring Branch
 ```bash
