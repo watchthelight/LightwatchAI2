@@ -8,7 +8,7 @@
 # add_subdirectory(integration)
 
 # Smoke tests (Phase 0.9)
-# add_subdirectory(smoke)
+add_subdirectory(smoke)
 
 # Benchmarks (Phase 39)
 # add_subdirectory(benchmarks)
