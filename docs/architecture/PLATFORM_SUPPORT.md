@@ -250,13 +250,80 @@ endif()
 
 CI should test these configurations:
 
-| OS | Arch | Compiler | SIMD | Priority |
-|----|------|----------|------|----------|
-| Ubuntu 22.04 | x86-64 | GCC 12 | AVX2 | P0 |
-| Ubuntu 22.04 | x86-64 | Clang 15 | AVX2 | P1 |
-| macOS 14 | ARM64 | Apple Clang | NEON | P0 |
-| macOS 14 | x86-64 | Apple Clang | AVX2 | P2 |
-| Windows 11 | x86-64 | MSVC 2022 | AVX2 | P1 |
+| OS | Arch | Compiler | SIMD | Priority | Notes |
+|----|------|----------|------|----------|-------|
+| Ubuntu 22.04 | x86-64 | GCC 12 | AVX2 | P0 | Primary target |
+| Ubuntu 22.04 | x86-64 | Clang 15 | AVX2 | P1 | Verify Clang compat |
+| macOS 14 | ARM64 | Apple Clang | NEON | P0 | Apple Silicon |
+| macOS 14 | x86-64 | Apple Clang | AVX2 | P2 | Intel Mac (legacy) |
+| Windows 11 | x86-64 | MSVC 2022 | AVX2 | P1 | Windows support |
+| Windows 11 | x86-64 | MinGW-w64 | AVX2 | P2 | Alternative Windows |
+
+### GitHub Actions CI Configuration
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          # P0: Primary targets
+          - os: ubuntu-22.04
+            compiler: gcc-12
+            simd: avx2
+          - os: macos-14
+            compiler: clang
+            simd: neon
+
+          # P1: Secondary targets
+          - os: ubuntu-22.04
+            compiler: clang-15
+            simd: avx2
+          - os: windows-2022
+            compiler: msvc
+            simd: avx2
+
+          # P2: Tertiary targets
+          - os: macos-14-large  # Intel runner
+            compiler: clang
+            simd: avx2
+          - os: windows-2022
+            compiler: mingw
+            simd: avx2
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+```
+
+### Windows-Specific CI Notes
+
+1. **MSVC Setup:** Use `windows-2022` runner with VS 2022 pre-installed
+2. **MinGW Setup:** Install via `chocolatey` or use MSYS2 action
+3. **Path handling:** Ensure forward slashes in CMake, backslashes in native commands
+4. **Long paths:** Enable long path support in CMake if needed
+
+```yaml
+# Windows-specific step
+- name: Setup MSVC
+  if: matrix.os == 'windows-2022' && matrix.compiler == 'msvc'
+  uses: ilammy/msvc-dev-cmd@v1
+```
 
 ## Performance Expectations
 
@@ -273,3 +340,50 @@ CI should test these configurations:
 2. **No distributed:** Single-machine only
 3. **No quantization:** fp32 only (no int8/fp16)
 4. **32-bit unsupported:** Memory requirements too high
+
+## ARM64 NEON Implementation Deferral
+
+### Rationale
+
+ARM64 NEON SIMD implementation details are intentionally deferred to Phase 04 for these reasons:
+
+1. **Focus on correctness first:** Phase 03 (Tensor Core) establishes correct scalar implementations that serve as the reference for all SIMD optimizations.
+
+2. **Architecture independence:** The Tensor API is designed to be SIMD-agnostic. Implementation details of AVX2 vs NEON are internal to Phase 04.
+
+3. **Simplified testing:** By deferring SIMD to Phase 04, we can validate tensor operations with scalar code first, then verify SIMD produces identical results.
+
+4. **Reduced complexity:** Phase 03 is already HIGH complexity (1500-2500 LOC). Adding NEON intrinsics would increase cognitive load.
+
+### Phase 04 NEON Requirements
+
+When implementing Phase 04, the NEON backend must:
+
+1. **Match scalar output:** All NEON operations must produce results within tolerance (1e-5) of scalar reference.
+
+2. **Support all tensor operations:** `add`, `mul`, `matmul`, `exp`, `softmax`, etc.
+
+3. **Handle alignment:** NEON prefers 16-byte alignment; handle unaligned gracefully.
+
+4. **Compile conditionally:** Use `#ifdef __ARM_NEON` or CMake detection.
+
+### NEON Intrinsics Reference
+
+```cpp
+#include <arm_neon.h>
+
+// Example: 4-wide float vector operations
+float32x4_t a = vld1q_f32(ptr_a);        // Load 4 floats
+float32x4_t b = vld1q_f32(ptr_b);        // Load 4 floats
+float32x4_t c = vaddq_f32(a, b);         // Add
+float32x4_t d = vmulq_f32(a, b);         // Multiply
+float32x4_t e = vfmaq_f32(c, a, b);      // Fused multiply-add
+vst1q_f32(ptr_out, c);                    // Store 4 floats
+
+// Horizontal sum
+float sum = vaddvq_f32(c);                // Sum all 4 elements
+```
+
+### Performance Target
+
+ARM64 NEON should achieve at least 80% of the tokens/second compared to AVX2 on equivalent-tier hardware (e.g., Apple M2 vs Intel i7-12th gen).

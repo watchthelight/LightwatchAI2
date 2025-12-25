@@ -1474,7 +1474,25 @@ PHASE_DEPS = {
 
 Each phase must include specific test cases. The prompt's "Required Tests" section defines concrete tests.
 
-### Core Test Cases by Phase
+**Note:** Detailed test specifications for complex phases have been extracted to `docs/test_specs/` to reduce context pressure. Reference these files when generating phase prompts:
+
+| Phase | File | Tests |
+|-------|------|-------|
+| 03 | `docs/test_specs/phase-03-tensor.md` | 12 |
+| 04 | `docs/test_specs/phase-04-simd.md` | 6 |
+| 05 | `docs/test_specs/phase-05-autograd.md` | 10 |
+| 06 | `docs/test_specs/phase-06-tokenizer.md` | 10 |
+| 15 | `docs/test_specs/phase-15-attention.md` | 8 |
+| 16 | `docs/test_specs/phase-16-mha.md` | 6 |
+| 19 | `docs/test_specs/phase-19-decoder.md` | 5 |
+| 29 | `docs/test_specs/phase-29-training.md` | 6 |
+| 31 | `docs/test_specs/phase-31-gpt.md` | 6 |
+| 36 | `docs/test_specs/phase-36-kvcache.md` | 5 |
+| 38 | `docs/test_specs/phase-38-cli.md` | 8 |
+
+See `docs/test_specs/README.md` for usage instructions.
+
+### Core Test Cases by Phase (Summary)
 
 #### Phase 03: Tensor (HIGH complexity - 12 test cases required)
 | Test | Input | Expected |
