@@ -14,3 +14,8 @@ add_test(NAME test_phase_02_memory COMMAND test_memory)
 add_executable(test_tensor test_tensor.cpp)
 lightwatch_set_compiler_flags(test_tensor)
 add_test(NAME test_phase_03_tensor COMMAND test_tensor)
+
+# Phase 04: SIMD operations tests
+add_executable(test_simd test_simd.cpp)
+lightwatch_set_compiler_flags(test_simd)
+add_test(NAME test_phase_04_simd COMMAND test_simd)
