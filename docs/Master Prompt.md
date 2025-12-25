@@ -125,6 +125,34 @@ Run during Phase 0 and document results in `docs/architecture/TOOLCHAIN.md`.
 
 ---
 
+## EXTERNAL DEPENDENCIES
+
+### Allowed Dependencies
+| Library | Version | Acquisition | Purpose |
+|---------|---------|-------------|---------|
+| nlohmann/json | 3.11.3+ | CMake FetchContent | JSON parsing for configs, state |
+
+### Acquisition Method
+All external dependencies are acquired via CMake FetchContent. Do NOT use:
+- Git submodules
+- Manual downloads
+- System packages
+
+This ensures reproducible builds across environments.
+
+### CMake FetchContent Pattern
+```cmake
+include(FetchContent)
+FetchContent_Declare(
+    <name>
+    GIT_REPOSITORY <url>
+    GIT_TAG <version>
+)
+FetchContent_MakeAvailable(<name>)
+```
+
+---
+
 ## STATE MANAGEMENT
 
 ### State File: .lightwatch_state.json
@@ -162,6 +190,14 @@ Run during Phase 0 and document results in `docs/architecture/TOOLCHAIN.md`.
 
 **Session recovery checklist (run on every session start):**
 ```bash
+# 0. Check for concurrent execution (lock file)
+if [ -f .lightwatch.lock ]; then
+    echo "ERROR: Lock file exists. Another session may be running."
+    echo "If no other session is active, remove: rm .lightwatch.lock"
+    exit 1
+fi
+echo $$ > .lightwatch.lock  # Create lock with PID
+
 # 1. Check state file exists and is valid JSON
 jq . .lightwatch_state.json > /dev/null || echo "ERROR: Invalid state file"
 
@@ -272,6 +308,7 @@ LightwatchAI2/
 ├── CLAUDE.md
 ├── README.md
 ├── docs/
+│   ├── MASTER_PROMPT.md      # Full orchestration prompt (copy of original)
 │   ├── prompts/              # Generated phase prompts
 │   ├── contracts/            # API contract headers
 │   ├── architecture/
@@ -300,32 +337,142 @@ LightwatchAI2/
 
 ### CLAUDE.md Content
 ```markdown
-# Claude Code Configuration
+# Claude Code Configuration - LightwatchAI2
 
-## Commit Authorship
+## ⚠️ CRITICAL: Read This First
+
+**Before taking ANY action on session start, you MUST:**
+1. Read the full orchestration prompt: `cat docs/MASTER_PROMPT.md`
+2. Run the session recovery checklist (see below)
+3. Check `.lightwatch_state.json` for current state
+
+The Master Prompt contains all orchestration logic, phase specifications, contracts, and procedures. This CLAUDE.md file contains quick reference only.
+
+---
+
+## Session Recovery Checklist
+
+Run this on EVERY session start before taking any action:
+
+```bash
+#!/bin/bash
+# 1. Check state file exists and is valid JSON
+jq . .lightwatch_state.json > /dev/null || { echo "ERROR: Invalid state file"; exit 1; }
+
+# 2. Check for lock file (concurrent execution)
+if [ -f ".lightwatch.lock" ]; then
+    PID=$(cat .lightwatch.lock)
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "ERROR: Another session is running (PID $PID)"
+        exit 1
+    fi
+    rm -f .lightwatch.lock
+fi
+
+# 3. Check current branch matches state
+CURRENT=$(git branch --show-current)
+EXPECTED=$(jq -r '.current_branch' .lightwatch_state.json)
+if [ "$CURRENT" != "$EXPECTED" ]; then
+    echo "WARNING: On branch $CURRENT, state expects $EXPECTED"
+fi
+
+# 4. Check for uncommitted changes
+if ! git diff --quiet; then
+    echo "WARNING: Uncommitted changes detected"
+    git status --short
+fi
+
+# 5. Report current state
+echo "=== Current State ==="
+echo "Phase: $(jq '.current_phase' .lightwatch_state.json)"
+echo "Status: $(jq -r '.phase_status' .lightwatch_state.json)"
+echo "Completed: $(jq '.completed_phases | length' .lightwatch_state.json)/40 phases"
+```
+
+---
+
+## Quick Reference
+
+### Commit Authorship (MANDATORY)
 ALL commits must use:
-- Author: watchthelight <buteverythingisnormal@gmail.com>
-- Command: git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com" commit
-
+```bash
+git -c user.name="watchthelight" -c user.email="buteverythingisnormal@gmail.com" commit -m "message"
+```
 Claude MUST NOT be listed as commit author under any circumstances.
 
-## Code Style
+### Commit Message Format
+```
+[PHASE-XX] <type>: <subject>
+
+<body>
+
+Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>
+```
+Types: `feat`, `fix`, `test`, `docs`, `refactor`, `perf`, `chore`
+
+### Code Style
 - C++17 standard
 - 4-space indentation
 - snake_case for functions/variables
 - PascalCase for classes/types
 - UPPER_CASE for constants
 
-## Testing
-- All public APIs must have unit tests
-- Integration tests for cross-component functionality
-- Benchmarks for performance-critical code
+### Test Naming Convention
+All test names MUST follow: `test_phase_XX_<component>_<behavior>`
 
-## Model Target
-- GPT-2 Small (124M parameters)
-- 12 layers, 768 hidden, 12 heads
-- 50257 vocab, 1024 context
+### Pre-Commit Testing (MANDATORY)
+Before EVERY commit:
+```bash
+cmake --build build
+ctest --test-dir build -R "phase_$(printf '%02d' $CURRENT_PHASE)" --output-on-failure
 ```
+If either fails, fix before committing.
+
+### Escalation Triggers (STOP and wait for human)
+- Contract change required after Phase 10
+- Performance < 25 tok/s after optimization
+- External dependency seems required
+- Memory > 8GB RAM
+- Two consecutive phase failures
+- Asset download fails all fallbacks
+- Same error 3 times after fix attempts
+- Git push fails 3 consecutive times
+
+### Model Target
+- GPT-2 Small (124M parameters)
+- 12 layers, 768 hidden, 12 heads, 64 head dim
+- 50257 vocab, 1024 context, 3072 FFN
+
+### Key Files
+| Purpose | Location |
+|---------|----------|
+| Full orchestration | `docs/MASTER_PROMPT.md` |
+| Current state | `.lightwatch_state.json` |
+| API contracts | `docs/contracts/*.hpp` |
+| Phase prompts | `docs/prompts/phase-XX-*.md` |
+| Test specs | `docs/test_specs/phase-XX-*.md` |
+| Decisions log | `docs/architecture/DECISIONS.md` |
+| Escalations | `docs/architecture/ESCALATIONS.md` |
+
+### Phase Order
+```
+0 → 0.3 → 0.7 → 0.5 → 0.9 → validate → 1..40 → verify
+```
+
+### State Values
+- `project_status`: IN_PROGRESS | COMPLETE | ESCALATED
+- `phase_status`: NOT_STARTED | EXECUTING | VERIFYING | COMPLETE | FAILED | PARTIAL_FAILURE | ESCALATED
+```
+
+### Setup Instructions
+
+During Phase 0 bootstrap:
+1. Copy the Master Prompt into the repository:
+   ```bash
+   cp /path/to/Master_Prompt.md docs/MASTER_PROMPT.md
+   ```
+2. This ensures the full orchestration logic is always available in the repo
+3. On session resume, Claude Code should read `docs/MASTER_PROMPT.md` first
 
 ### Commit Message Format
 
@@ -387,6 +534,112 @@ Signed-off-by: watchthelight <buteverythingisnormal@gmail.com>"
 3. Blank line between subject and body
 4. Reference test names when fixing test failures
 5. ALWAYS include Signed-off-by line
+
+### CMakeLists.txt Template
+```cmake
+cmake_minimum_required(VERSION 3.16)
+project(lightwatch VERSION 0.1.0 LANGUAGES CXX)
+
+# C++ Standard
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Export compile commands for IDE support
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Output directories
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+# Compiler warnings
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-Wall -Wextra -Wpedantic)
+elseif(MSVC)
+    add_compile_options(/W4)
+endif()
+
+# JSON library (header-only)
+include(FetchContent)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
+# Include directories
+include_directories(${CMAKE_SOURCE_DIR}/include)
+
+# Source files (populated by later phases)
+# add_subdirectory(src)
+
+# Testing
+enable_testing()
+include(CTest)
+add_subdirectory(tests)
+
+# Installation (optional)
+install(DIRECTORY include/ DESTINATION include)
+```
+
+This template provides:
+- C++17 with no extensions
+- Consistent output directories
+- Compiler warnings enabled
+- nlohmann/json via FetchContent
+- Testing infrastructure
+- IDE support via compile_commands.json
+
+### .gitignore Content
+```gitignore
+# Build directories
+build/
+cmake-build-*/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled objects
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+
+# Executables
+*.exe
+*.out
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+# Session lock
+.lightwatch.lock
+
+# Large binary files (if weights are downloaded)
+data/weights/*.bin
+data/weights/*.pt
+data/weights/*.safetensors
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+```
 
 ### docs/architecture/DECISIONS.md Template
 ```markdown
@@ -1635,56 +1888,56 @@ See `docs/test_specs/README.md` for usage instructions.
 #### Phase 03: Tensor (HIGH complexity - 12 test cases required)
 | Test | Input | Expected |
 |------|-------|----------|
-| `test_tensor_construction` | `Shape{2,3,4}` | `numel()==24`, `ndim()==3` |
-| `test_tensor_zeros` | `Shape{3,3}` | All elements == 0.0 |
-| `test_tensor_ones` | `Shape{2,2}` | All elements == 1.0 |
-| `test_tensor_randn` | `Shape{100}` | Mean ≈ 0.0 (±0.3), Std ≈ 1.0 (±0.3) |
-| `test_tensor_matmul_2d` | `A[2,3] @ B[3,4]` | Result shape `[2,4]`, values correct |
-| `test_tensor_matmul_batch` | `A[5,2,3] @ B[5,3,4]` | Result shape `[5,2,4]` |
-| `test_tensor_broadcast_add` | `A[2,3] + B[3]` | Result shape `[2,3]`, values correct |
-| `test_tensor_broadcast_mul` | `A[2,3,4] * B[1,4]` | Result shape `[2,3,4]` |
-| `test_tensor_slice` | `T[10,20].slice(0,2,5)` | Result shape `[3,20]` |
-| `test_tensor_transpose` | `T[2,3].transpose(0,1)` | Result shape `[3,2]` |
-| `test_tensor_contiguous` | Non-contiguous slice | `is_contiguous()==true` after `.contiguous()` |
-| `test_tensor_reduction_sum` | `T[2,3].sum(1)` | Result shape `[2]`, values correct |
+| `test_phase_03_tensor_construction` | `Shape{2,3,4}` | `numel()==24`, `ndim()==3` |
+| `test_phase_03_tensor_zeros` | `Shape{3,3}` | All elements == 0.0 |
+| `test_phase_03_tensor_ones` | `Shape{2,2}` | All elements == 1.0 |
+| `test_phase_03_tensor_randn` | `Shape{100}` | Mean ≈ 0.0 (±0.3), Std ≈ 1.0 (±0.3) |
+| `test_phase_03_tensor_matmul_2d` | `A[2,3] @ B[3,4]` | Result shape `[2,4]`, values correct |
+| `test_phase_03_tensor_matmul_batch` | `A[5,2,3] @ B[5,3,4]` | Result shape `[5,2,4]` |
+| `test_phase_03_tensor_broadcast_add` | `A[2,3] + B[3]` | Result shape `[2,3]`, values correct |
+| `test_phase_03_tensor_broadcast_mul` | `A[2,3,4] * B[1,4]` | Result shape `[2,3,4]` |
+| `test_phase_03_tensor_slice` | `T[10,20].slice(0,2,5)` | Result shape `[3,20]` |
+| `test_phase_03_tensor_transpose` | `T[2,3].transpose(0,1)` | Result shape `[3,2]` |
+| `test_phase_03_tensor_contiguous` | Non-contiguous slice | `is_contiguous()==true` after `.contiguous()` |
+| `test_phase_03_tensor_reduction_sum` | `T[2,3].sum(1)` | Result shape `[2]`, values correct |
 
 #### Phase 04: SIMD Operations (HIGH complexity - 6 test cases required)
 | Test | Input | Expected |
 |------|-------|----------|
-| `test_simd_add` | `A[1024], B[1024]` | Element-wise sum matches scalar |
-| `test_simd_mul` | `A[1024], B[1024]` | Element-wise product matches scalar |
-| `test_simd_dot` | `A[1024], B[1024]` | Dot product matches scalar (tol 1e-5) |
-| `test_simd_matmul` | `A[64,64] @ B[64,64]` | Matches scalar implementation |
-| `test_simd_exp` | `A[1024]` in range [-5,5] | Matches std::exp (tol 1e-5) |
-| `test_simd_alignment` | Unaligned data | No crash, correct results |
+| `test_phase_04_simd_add` | `A[1024], B[1024]` | Element-wise sum matches scalar |
+| `test_phase_04_simd_mul` | `A[1024], B[1024]` | Element-wise product matches scalar |
+| `test_phase_04_simd_dot` | `A[1024], B[1024]` | Dot product matches scalar (tol 1e-5) |
+| `test_phase_04_simd_matmul` | `A[64,64] @ B[64,64]` | Matches scalar implementation |
+| `test_phase_04_simd_exp` | `A[1024]` in range [-5,5] | Matches std::exp (tol 1e-5) |
+| `test_phase_04_simd_alignment` | Unaligned data | No crash, correct results |
 
 #### Phase 05: Autograd (HIGH complexity - 10 test cases required)
 | Test | Input | Expected |
 |------|-------|----------|
-| `test_autograd_add` | `c = a + b; c.backward()` | `a.grad == 1`, `b.grad == 1` |
-| `test_autograd_mul` | `c = a * b; c.backward()` | `a.grad == b.data`, `b.grad == a.data` |
-| `test_autograd_matmul` | `C = A @ B; C.sum().backward()` | Gradients match numerical diff (tol 1e-5) |
-| `test_autograd_chain` | `d = relu(a @ b + c)` | All gradients computed |
-| `test_autograd_no_grad` | `requires_grad=false` | `has_grad()==false` |
-| `test_autograd_accumulation` | Two backward passes | Gradients sum |
-| `test_autograd_detach` | `b = a.detach()` | `b.grad_fn() == nullptr` |
-| `test_autograd_relu_grad` | `y = relu(x); y.backward()` | grad = 1 if x > 0, else 0 |
-| `test_autograd_softmax_grad` | `y = softmax(x); y.backward()` | Jacobian matches numerical diff |
-| `test_autograd_no_grad_guard` | Inside NoGradGuard | No graph built |
+| `test_phase_05_autograd_add` | `c = a + b; c.backward()` | `a.grad == 1`, `b.grad == 1` |
+| `test_phase_05_autograd_mul` | `c = a * b; c.backward()` | `a.grad == b.data`, `b.grad == a.data` |
+| `test_phase_05_autograd_matmul` | `C = A @ B; C.sum().backward()` | Gradients match numerical diff (tol 1e-5) |
+| `test_phase_05_autograd_chain` | `d = relu(a @ b + c)` | All gradients computed |
+| `test_phase_05_autograd_no_grad` | `requires_grad=false` | `has_grad()==false` |
+| `test_phase_05_autograd_accumulation` | Two backward passes | Gradients sum |
+| `test_phase_05_autograd_detach` | `b = a.detach()` | `b.grad_fn() == nullptr` |
+| `test_phase_05_autograd_relu_grad` | `y = relu(x); y.backward()` | grad = 1 if x > 0, else 0 |
+| `test_phase_05_autograd_softmax_grad` | `y = softmax(x); y.backward()` | Jacobian matches numerical diff |
+| `test_phase_05_autograd_no_grad_guard` | Inside NoGradGuard | No graph built |
 
-#### Phase 06: Tokenizer (MEDIUM complexity - 8 test cases required)
+#### Phase 06: Tokenizer (MEDIUM complexity - 10 test cases required)
 | Test | Input | Expected |
 |------|-------|----------|
-| `test_tokenizer_roundtrip` | `"Hello, world!"` | `decode(encode(x)) == x` |
-| `test_tokenizer_special` | EOS token | ID == 50256 |
-| `test_tokenizer_unicode` | `"日本語"` | No crash, tokens produced |
-| `test_tokenizer_empty` | `""` | Returns empty vector |
-| `test_tokenizer_vocab_size` | Load GPT-2 vocab | `vocab_size() == 50257` |
-| `test_tokenizer_whitespace` | `"  leading and trailing  "` | Roundtrip exact match |
-| `test_tokenizer_numbers` | `"12345"` | Tokenizes correctly |
-| `test_tokenizer_long_text` | 2000 random tokens | No crash, valid IDs |
-| `test_tokenizer_emoji` | `"Hello 🌍 World"` | Roundtrip preserves emoji |
-| `test_tokenizer_newlines` | `"line1\nline2\r\nline3"` | Roundtrip exact match |
+| `test_phase_06_tokenizer_roundtrip` | `"Hello, world!"` | `decode(encode(x)) == x` |
+| `test_phase_06_tokenizer_special` | EOS token | ID == 50256 |
+| `test_phase_06_tokenizer_unicode` | `"日本語"` | No crash, tokens produced |
+| `test_phase_06_tokenizer_empty` | `""` | Returns empty vector |
+| `test_phase_06_tokenizer_vocab_size` | Load GPT-2 vocab | `vocab_size() == 50257` |
+| `test_phase_06_tokenizer_whitespace` | `"  leading and trailing  "` | Roundtrip exact match |
+| `test_phase_06_tokenizer_numbers` | `"12345"` | Tokenizes correctly |
+| `test_phase_06_tokenizer_long_text` | 2000 random tokens | No crash, valid IDs |
+| `test_phase_06_tokenizer_emoji` | `"Hello 🌍 World"` | Roundtrip preserves emoji |
+| `test_phase_06_tokenizer_newlines` | `"line1\nline2\r\nline3"` | Roundtrip exact match |
 
 #### Phase 15: Attention (HIGH complexity - 8 test cases required)
 | Test | Input | Expected |
@@ -2198,7 +2451,8 @@ These are shell commands that MUST exit 0. Run them ALL before considering the p
    - Write all tests from Required Tests table
    - **Before EVERY commit:**
      1. Run `cmake --build build` — must exit 0
-     2. Run `ctest -R "phase_$(printf '%02d' $N)" --output-on-failure` — must exit 0
+     2. Run `ctest --test-dir build -R "phase_$(printf '%02d' $N)" --output-on-failure` — must exit 0
+        - This matches all tests named `test_phase_XX_*` for current phase
      3. If either fails, fix before committing
    - Commit after each logical unit of work with descriptive messages
    - If tests don't exist yet (early in phase), at minimum ensure build succeeds
@@ -2218,6 +2472,7 @@ These are shell commands that MUST exit 0. Run them ALL before considering the p
    - git checkout main
    - git merge phase-{N:02d}-{slug} --no-ff
    - git push origin main (if remote exists)
+   - Remove lock file: `rm -f .lightwatch.lock`
 
 8. COMMIT STATE
    - git add .lightwatch_state.json
@@ -2263,6 +2518,56 @@ If the same build error persists after 3 fix attempts:
 3. Include what was attempted
 4. Set `project_status = "ESCALATED"`
 5. STOP and wait for human input
+
+---
+
+## GIT PUSH FAILURE HANDLING
+
+When `git push` fails during the COMPLETE step:
+
+### 1. Identify the Error
+```bash
+git push origin main 2>&1 | tee /tmp/push_error.txt
+```
+
+### 2. Common Errors and Actions
+
+| Error | Cause | Action |
+|-------|-------|--------|
+| `Permission denied (publickey)` | SSH key not configured | Escalate — requires human SSH setup |
+| `fatal: Authentication failed` | Bad credentials | Escalate — requires human auth setup |
+| `! [rejected]` (non-fast-forward) | Remote has commits not in local | `git pull --rebase origin main` then retry |
+| `remote: Repository not found` | Wrong remote URL or no access | Escalate — requires human intervention |
+| Connection timeout | Network issue | Retry up to 3 times with 10s delay |
+
+### 3. Retry Logic
+```bash
+MAX_RETRIES=3
+RETRY_DELAY=10
+
+for i in $(seq 1 $MAX_RETRIES); do
+    if git push origin main; then
+        echo "Push successful on attempt $i"
+        break
+    fi
+    if [ $i -eq $MAX_RETRIES ]; then
+        echo "Push failed after $MAX_RETRIES attempts"
+        # Escalate
+    fi
+    echo "Retry $i/$MAX_RETRIES in ${RETRY_DELAY}s..."
+    sleep $RETRY_DELAY
+done
+```
+
+### 4. Escalation
+If push fails after 3 retries:
+1. Document in `docs/architecture/ESCALATIONS.md`
+2. Include full error text from `/tmp/push_error.txt`
+3. Set `project_status = "ESCALATED"`
+4. Continue local development (commits are preserved)
+5. Wait for human to resolve auth/permission issue
+
+> **Note:** Git push failures do NOT block local phase completion. The phase is complete when code is committed locally. Push is for backup/sync only.
 
 ---
 
@@ -2584,6 +2889,7 @@ Stop execution and request human input if ANY of these conditions occur:
 | Asset Unavailable | All fallback URLs for vocab/weights fail | Cannot proceed without assets |
 | Test Impossibility | A required test cannot be written as specified | Spec may be wrong |
 | Infinite Loop | Same error recurs after 3 fix attempts | Need different approach |
+| Git Push Failure | `git push` fails after 3 retry attempts | Auth/permission issue needs human |
 
 ### Escalation Procedure
 1. Update `.lightwatch_state.json`:
