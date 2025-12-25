@@ -2,7 +2,7 @@
 # Tests are organized by type: unit, integration, smoke, benchmarks
 
 # Unit tests (added by implementation phases)
-# add_subdirectory(unit)
+add_subdirectory(unit)
 
 # Integration tests (added by checkpoint phases)
 # add_subdirectory(integration)
