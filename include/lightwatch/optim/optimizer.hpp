@@ -63,6 +63,43 @@ public:
     std::vector<ParamGroup>& param_groups() { return param_groups_; }
     const std::vector<ParamGroup>& param_groups() const { return param_groups_; }
 
+    // State dict for serialization (optimizer state)
+    // Returns a flattened map: "param_idx.key" -> tensor
+    std::unordered_map<std::string, Tensor<float>> state_dict() const {
+        std::unordered_map<std::string, Tensor<float>> dict;
+        int param_idx = 0;
+        for (const auto& group : param_groups_) {
+            for (const auto* param : group.params) {
+                auto it = state_.find(const_cast<autograd::Variable*>(param));
+                if (it != state_.end()) {
+                    for (const auto& kv : it->second) {
+                        std::string key = std::to_string(param_idx) + "." + kv.first;
+                        dict[key] = kv.second;
+                    }
+                }
+                ++param_idx;
+            }
+        }
+        return dict;
+    }
+
+    // Load state dict
+    void load_state_dict(const std::unordered_map<std::string, Tensor<float>>& dict) {
+        int param_idx = 0;
+        for (auto& group : param_groups_) {
+            for (auto* param : group.params) {
+                std::string prefix = std::to_string(param_idx) + ".";
+                for (const auto& kv : dict) {
+                    if (kv.first.substr(0, prefix.size()) == prefix) {
+                        std::string key = kv.first.substr(prefix.size());
+                        state_[param][key] = kv.second;
+                    }
+                }
+                ++param_idx;
+            }
+        }
+    }
+
 protected:
     float lr_;
     float weight_decay_;

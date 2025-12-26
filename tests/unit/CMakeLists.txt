@@ -116,3 +116,8 @@ add_test(NAME test_phase_24_scheduler COMMAND test_scheduler)
 add_executable(test_clip test_clip.cpp)
 lightwatch_set_compiler_flags(test_clip)
 add_test(NAME test_phase_25_clip COMMAND test_clip)
+
+# Phase 26: Checkpointing tests
+add_executable(test_checkpoint test_checkpoint.cpp)
+lightwatch_set_compiler_flags(test_checkpoint)
+add_test(NAME test_phase_26_checkpoint COMMAND test_checkpoint)

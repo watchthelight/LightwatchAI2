@@ -1,10 +1,10 @@
 {
   "project_status": "IN_PROGRESS",
   "generation_complete": true,
-  "current_phase": 26,
+  "current_phase": 27,
   "phase_status": "NOT_STARTED",
   "current_branch": "main",
-  "completed_phases": [0, 0.3, 0.5, 0.7, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25],
+  "completed_phases": [0, 0.3, 0.5, 0.7, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],
   "failed_phases": [],
   "completed_deliverables": [
     "tests/smoke/smoke_test.cpp",
@@ -52,7 +52,9 @@
     "include/lightwatch/optim/scheduler.hpp",
     "tests/unit/test_scheduler.cpp",
     "include/lightwatch/optim/clip.hpp",
-    "tests/unit/test_clip.cpp"
+    "tests/unit/test_clip.cpp",
+    "include/lightwatch/checkpoint.hpp",
+    "tests/unit/test_checkpoint.cpp"
   ],
   "pending_deliverables": [],
   "last_commit": "",
