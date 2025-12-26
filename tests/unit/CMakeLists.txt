@@ -132,3 +132,8 @@ set_tests_properties(test_phase_27_dataloader PROPERTIES WORKING_DIRECTORY ${CMA
 add_executable(test_collate test_collate.cpp)
 lightwatch_set_compiler_flags(test_collate)
 add_test(NAME test_phase_28_collate COMMAND test_collate)
+
+# Phase 29: Training Loop tests
+add_executable(test_trainer test_trainer.cpp)
+lightwatch_set_compiler_flags(test_trainer)
+add_test(NAME test_phase_29_trainer COMMAND test_trainer)
