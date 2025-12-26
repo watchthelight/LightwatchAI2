@@ -164,3 +164,8 @@ add_test(NAME test_phase_34_generate COMMAND test_generate)
 add_executable(test_sampling test_sampling.cpp)
 lightwatch_set_compiler_flags(test_sampling)
 add_test(NAME test_phase_35_sampling COMMAND test_sampling)
+
+# Phase 36: KV-Cache tests
+add_executable(test_cache test_cache.cpp)
+lightwatch_set_compiler_flags(test_cache)
+add_test(NAME test_phase_36_cache COMMAND test_cache)
