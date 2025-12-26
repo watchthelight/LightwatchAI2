@@ -1,10 +1,10 @@
 {
   "project_status": "IN_PROGRESS",
   "generation_complete": true,
-  "current_phase": 27,
+  "current_phase": 28,
   "phase_status": "NOT_STARTED",
   "current_branch": "main",
-  "completed_phases": [0, 0.3, 0.5, 0.7, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],
+  "completed_phases": [0, 0.3, 0.5, 0.7, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27],
   "failed_phases": [],
   "completed_deliverables": [
     "tests/smoke/smoke_test.cpp",
@@ -54,7 +54,10 @@
     "include/lightwatch/optim/clip.hpp",
     "tests/unit/test_clip.cpp",
     "include/lightwatch/checkpoint.hpp",
-    "tests/unit/test_checkpoint.cpp"
+    "tests/unit/test_checkpoint.cpp",
+    "include/lightwatch/data/dataset.hpp",
+    "include/lightwatch/data/dataloader.hpp",
+    "tests/unit/test_dataloader.cpp"
   ],
   "pending_deliverables": [],
   "last_commit": "",

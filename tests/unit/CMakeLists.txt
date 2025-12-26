@@ -121,3 +121,9 @@ add_test(NAME test_phase_25_clip COMMAND test_clip)
 add_executable(test_checkpoint test_checkpoint.cpp)
 lightwatch_set_compiler_flags(test_checkpoint)
 add_test(NAME test_phase_26_checkpoint COMMAND test_checkpoint)
+
+# Phase 27: Data Loading tests
+add_executable(test_dataloader test_dataloader.cpp)
+lightwatch_set_compiler_flags(test_dataloader)
+add_test(NAME test_phase_27_dataloader COMMAND test_dataloader)
+set_tests_properties(test_phase_27_dataloader PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
