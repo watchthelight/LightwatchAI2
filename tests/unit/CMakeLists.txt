@@ -127,3 +127,8 @@ add_executable(test_dataloader test_dataloader.cpp)
 lightwatch_set_compiler_flags(test_dataloader)
 add_test(NAME test_phase_27_dataloader COMMAND test_dataloader)
 set_tests_properties(test_phase_27_dataloader PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# Phase 28: Batch Processing tests
+add_executable(test_collate test_collate.cpp)
+lightwatch_set_compiler_flags(test_collate)
+add_test(NAME test_phase_28_collate COMMAND test_collate)
