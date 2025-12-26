@@ -76,3 +76,8 @@ add_test(NAME test_phase_15_attention COMMAND test_attention)
 add_executable(test_mha test_mha.cpp)
 lightwatch_set_compiler_flags(test_mha)
 add_test(NAME test_phase_16_mha COMMAND test_mha)
+
+# Phase 17: FFN Block tests
+add_executable(test_ffn test_ffn.cpp)
+lightwatch_set_compiler_flags(test_ffn)
+add_test(NAME test_phase_17_ffn COMMAND test_ffn)
