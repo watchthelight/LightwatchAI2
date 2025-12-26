@@ -86,3 +86,8 @@ add_test(NAME test_phase_17_ffn COMMAND test_ffn)
 add_executable(test_transformer test_transformer.cpp)
 lightwatch_set_compiler_flags(test_transformer)
 add_test(NAME test_phase_18_transformer COMMAND test_transformer)
+
+# Phase 19: Transformer Decoder Block tests
+add_executable(test_decoder test_decoder.cpp)
+lightwatch_set_compiler_flags(test_decoder)
+add_test(NAME test_phase_19_decoder COMMAND test_decoder)
