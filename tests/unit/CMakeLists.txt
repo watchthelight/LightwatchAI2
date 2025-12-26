@@ -46,3 +46,8 @@ add_test(NAME test_phase_08_embedding COMMAND test_embedding)
 add_executable(test_positional test_positional.cpp)
 lightwatch_set_compiler_flags(test_positional)
 add_test(NAME test_phase_09_positional COMMAND test_positional)
+
+# Phase 11: Linear layer tests
+add_executable(test_linear test_linear.cpp)
+lightwatch_set_compiler_flags(test_linear)
+add_test(NAME test_phase_11_linear COMMAND test_linear)

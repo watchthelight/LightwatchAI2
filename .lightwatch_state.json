@@ -1,10 +1,10 @@
 {
   "project_status": "IN_PROGRESS",
   "generation_complete": true,
-  "current_phase": 11,
+  "current_phase": 12,
   "phase_status": "NOT_STARTED",
   "current_branch": "main",
-  "completed_phases": [0, 0.3, 0.5, 0.7, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  "completed_phases": [0, 0.3, 0.5, 0.7, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
   "failed_phases": [],
   "completed_deliverables": [
     "tests/smoke/smoke_test.cpp",
@@ -24,7 +24,9 @@
     "include/lightwatch/nn/module.hpp",
     "include/lightwatch/nn/embedding.hpp",
     "include/lightwatch/nn/positional.hpp",
-    "tests/integration/test_foundation.cpp"
+    "tests/integration/test_foundation.cpp",
+    "include/lightwatch/nn/linear.hpp",
+    "tests/unit/test_linear.cpp"
   ],
   "pending_deliverables": [],
   "last_commit": "",
