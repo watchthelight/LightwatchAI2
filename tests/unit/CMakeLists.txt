@@ -61,3 +61,8 @@ add_test(NAME test_phase_12_activations COMMAND test_activations)
 add_executable(test_normalization test_normalization.cpp)
 lightwatch_set_compiler_flags(test_normalization)
 add_test(NAME test_phase_13_normalization COMMAND test_normalization)
+
+# Phase 14: Dropout tests
+add_executable(test_dropout test_dropout.cpp)
+lightwatch_set_compiler_flags(test_dropout)
+add_test(NAME test_phase_14_dropout COMMAND test_dropout)
