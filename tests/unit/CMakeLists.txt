@@ -71,3 +71,8 @@ add_test(NAME test_phase_14_dropout COMMAND test_dropout)
 add_executable(test_attention test_attention.cpp)
 lightwatch_set_compiler_flags(test_attention)
 add_test(NAME test_phase_15_attention COMMAND test_attention)
+
+# Phase 16: Multi-Head Attention tests
+add_executable(test_mha test_mha.cpp)
+lightwatch_set_compiler_flags(test_mha)
+add_test(NAME test_phase_16_mha COMMAND test_mha)

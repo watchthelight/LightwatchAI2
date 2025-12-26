@@ -1,9 +1,10 @@
-// Phase 15: Single-Head Attention
-// Scaled dot-product attention with optional causal masking
+// Phase 15-16: Attention Mechanisms
+// Scaled dot-product attention and multi-head attention
 
 #pragma once
 
 #include <lightwatch/nn/module.hpp>
+#include <lightwatch/nn/linear.hpp>
 #include <lightwatch/nn/dropout.hpp>
 #include <lightwatch/autograd.hpp>
 #include <cmath>
@@ -355,6 +356,231 @@ private:
             }
 
             return {grad_a, grad_b};
+        }
+    };
+};
+
+// Multi-Head Attention
+// MHA(Q, K, V) = Concat(head_1, ..., head_h) W^O
+// where head_i = Attention(Q W^Q_i, K W^K_i, V W^V_i)
+class MultiHeadAttention : public Module {
+public:
+    MultiHeadAttention(size_t embed_dim, size_t num_heads,
+                       float dropout_p = 0.0f, bool bias = true)
+        : embed_dim_(embed_dim)
+        , num_heads_(num_heads)
+        , head_dim_(embed_dim / num_heads)
+        , q_proj(embed_dim, embed_dim, bias)
+        , k_proj(embed_dim, embed_dim, bias)
+        , v_proj(embed_dim, embed_dim, bias)
+        , out_proj(embed_dim, embed_dim, bias)
+        , attention_(dropout_p) {
+
+        if (embed_dim % num_heads != 0) {
+            throw std::invalid_argument(
+                "embed_dim must be divisible by num_heads");
+        }
+
+        register_module("q_proj", std::make_shared<Linear>(q_proj));
+        register_module("k_proj", std::make_shared<Linear>(k_proj));
+        register_module("v_proj", std::make_shared<Linear>(v_proj));
+        register_module("out_proj", std::make_shared<Linear>(out_proj));
+    }
+
+    // Self-attention: input used for Q, K, V
+    autograd::Variable forward(const autograd::Variable& input) override {
+        return forward(input, input, input, nullptr);
+    }
+
+    // Full forward with explicit Q, K, V and optional mask
+    autograd::Variable forward(
+        const autograd::Variable& query,
+        const autograd::Variable& key,
+        const autograd::Variable& value,
+        const Tensor<float>* mask = nullptr) {
+
+        const auto& q_shape = query.shape();
+        size_t batch_size = q_shape[0];
+        size_t seq_len = q_shape[1];
+
+        // Project Q, K, V
+        auto q = q_proj.forward(query);  // {batch, seq, embed_dim}
+        auto k = k_proj.forward(key);
+        auto v = v_proj.forward(value);
+
+        // Split heads: {batch, seq, embed} -> {batch * heads, seq, head_dim}
+        auto q_heads = split_heads(q, batch_size, seq_len);
+        auto k_heads = split_heads(k, batch_size, seq_len);
+        auto v_heads = split_heads(v, batch_size, seq_len);
+
+        // Apply attention
+        auto attn_output = attention_.forward(q_heads, k_heads, v_heads, mask);
+
+        // Merge heads: {batch * heads, seq, head_dim} -> {batch, seq, embed}
+        auto merged = merge_heads(attn_output, batch_size, seq_len);
+
+        // Output projection
+        return out_proj.forward(merged);
+    }
+
+    size_t embed_dim() const { return embed_dim_; }
+    size_t num_heads() const { return num_heads_; }
+    size_t head_dim() const { return head_dim_; }
+
+    Linear q_proj;
+    Linear k_proj;
+    Linear v_proj;
+    Linear out_proj;
+
+private:
+    size_t embed_dim_;
+    size_t num_heads_;
+    size_t head_dim_;
+    ScaledDotProductAttention attention_;
+
+    // Split heads: {batch, seq, embed} -> {batch * heads, seq, head_dim}
+    autograd::Variable split_heads(
+        const autograd::Variable& x,
+        size_t batch_size,
+        size_t seq_len) {
+
+        // Reshape: {batch, seq, heads * head_dim} -> {batch, seq, heads, head_dim}
+        // Then transpose to {batch, heads, seq, head_dim}
+        // Then reshape to {batch * heads, seq, head_dim}
+
+        Tensor<float> result({batch_size * num_heads_, seq_len, head_dim_});
+        const float* in_data = x.data().data();
+        float* out_data = result.data();
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t s = 0; s < seq_len; ++s) {
+                for (size_t h = 0; h < num_heads_; ++h) {
+                    for (size_t d = 0; d < head_dim_; ++d) {
+                        // in: [b, s, h * head_dim + d]
+                        // out: [b * num_heads + h, s, d]
+                        size_t in_idx = b * seq_len * embed_dim_ +
+                                       s * embed_dim_ +
+                                       h * head_dim_ + d;
+                        size_t out_idx = (b * num_heads_ + h) * seq_len * head_dim_ +
+                                        s * head_dim_ + d;
+                        out_data[out_idx] = in_data[in_idx];
+                    }
+                }
+            }
+        }
+
+        autograd::Variable out(result, x.requires_grad());
+
+        if (autograd::is_grad_enabled() && out.requires_grad()) {
+            auto fn = std::make_shared<SplitHeadsBackward>();
+            fn->batch_size = batch_size;
+            fn->seq_len = seq_len;
+            fn->num_heads = num_heads_;
+            fn->head_dim = head_dim_;
+            fn->embed_dim = embed_dim_;
+            fn->inputs.push_back(x.impl());
+            out.set_grad_fn(fn);
+        }
+
+        return out;
+    }
+
+    class SplitHeadsBackward : public autograd::Function {
+    public:
+        size_t batch_size, seq_len, num_heads, head_dim, embed_dim;
+
+        std::vector<Tensor<float>> backward(const Tensor<float>& grad_output) override {
+            Tensor<float> grad_input({batch_size, seq_len, embed_dim});
+            const float* go = grad_output.data();
+            float* gi = grad_input.data();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t s = 0; s < seq_len; ++s) {
+                    for (size_t h = 0; h < num_heads; ++h) {
+                        for (size_t d = 0; d < head_dim; ++d) {
+                            size_t in_idx = b * seq_len * embed_dim +
+                                           s * embed_dim +
+                                           h * head_dim + d;
+                            size_t out_idx = (b * num_heads + h) * seq_len * head_dim +
+                                            s * head_dim + d;
+                            gi[in_idx] = go[out_idx];
+                        }
+                    }
+                }
+            }
+
+            return {grad_input};
+        }
+    };
+
+    // Merge heads: {batch * heads, seq, head_dim} -> {batch, seq, embed}
+    autograd::Variable merge_heads(
+        const autograd::Variable& x,
+        size_t batch_size,
+        size_t seq_len) {
+
+        Tensor<float> result({batch_size, seq_len, embed_dim_});
+        const float* in_data = x.data().data();
+        float* out_data = result.data();
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t s = 0; s < seq_len; ++s) {
+                for (size_t h = 0; h < num_heads_; ++h) {
+                    for (size_t d = 0; d < head_dim_; ++d) {
+                        // in: [b * num_heads + h, s, d]
+                        // out: [b, s, h * head_dim + d]
+                        size_t in_idx = (b * num_heads_ + h) * seq_len * head_dim_ +
+                                       s * head_dim_ + d;
+                        size_t out_idx = b * seq_len * embed_dim_ +
+                                        s * embed_dim_ +
+                                        h * head_dim_ + d;
+                        out_data[out_idx] = in_data[in_idx];
+                    }
+                }
+            }
+        }
+
+        autograd::Variable out(result, x.requires_grad());
+
+        if (autograd::is_grad_enabled() && out.requires_grad()) {
+            auto fn = std::make_shared<MergeHeadsBackward>();
+            fn->batch_size = batch_size;
+            fn->seq_len = seq_len;
+            fn->num_heads = num_heads_;
+            fn->head_dim = head_dim_;
+            fn->embed_dim = embed_dim_;
+            fn->inputs.push_back(x.impl());
+            out.set_grad_fn(fn);
+        }
+
+        return out;
+    }
+
+    class MergeHeadsBackward : public autograd::Function {
+    public:
+        size_t batch_size, seq_len, num_heads, head_dim, embed_dim;
+
+        std::vector<Tensor<float>> backward(const Tensor<float>& grad_output) override {
+            Tensor<float> grad_input({batch_size * num_heads, seq_len, head_dim});
+            const float* go = grad_output.data();
+            float* gi = grad_input.data();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t s = 0; s < seq_len; ++s) {
+                    for (size_t h = 0; h < num_heads; ++h) {
+                        for (size_t d = 0; d < head_dim; ++d) {
+                            size_t in_idx = (b * num_heads + h) * seq_len * head_dim +
+                                           s * head_dim + d;
+                            size_t out_idx = b * seq_len * embed_dim +
+                                            s * embed_dim +
+                                            h * head_dim + d;
+                            gi[in_idx] = go[out_idx];
+                        }
+                    }
+                }
+            }
+
+            return {grad_input};
         }
     };
 };
