@@ -56,3 +56,8 @@ add_test(NAME test_phase_11_linear COMMAND test_linear)
 add_executable(test_activations test_activations.cpp)
 lightwatch_set_compiler_flags(test_activations)
 add_test(NAME test_phase_12_activations COMMAND test_activations)
+
+# Phase 13: Layer normalization tests
+add_executable(test_normalization test_normalization.cpp)
+lightwatch_set_compiler_flags(test_normalization)
+add_test(NAME test_phase_13_normalization COMMAND test_normalization)
