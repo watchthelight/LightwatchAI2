@@ -154,3 +154,8 @@ set_tests_properties(test_phase_32_model_config PROPERTIES WORKING_DIRECTORY ${C
 add_executable(test_init test_init.cpp)
 lightwatch_set_compiler_flags(test_init)
 add_test(NAME test_phase_33_init COMMAND test_init)
+
+# Phase 34: Greedy Decode tests
+add_executable(test_generate test_generate.cpp)
+lightwatch_set_compiler_flags(test_generate)
+add_test(NAME test_phase_34_generate COMMAND test_generate)
