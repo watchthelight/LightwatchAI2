@@ -101,3 +101,8 @@ add_test(NAME test_phase_21_loss COMMAND test_loss)
 add_executable(test_sgd test_sgd.cpp)
 lightwatch_set_compiler_flags(test_sgd)
 add_test(NAME test_phase_22_sgd COMMAND test_sgd)
+
+# Phase 23: Adam Optimizer tests
+add_executable(test_adam test_adam.cpp)
+lightwatch_set_compiler_flags(test_adam)
+add_test(NAME test_phase_23_adam COMMAND test_adam)
