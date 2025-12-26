@@ -159,3 +159,8 @@ add_test(NAME test_phase_33_init COMMAND test_init)
 add_executable(test_generate test_generate.cpp)
 lightwatch_set_compiler_flags(test_generate)
 add_test(NAME test_phase_34_generate COMMAND test_generate)
+
+# Phase 35: Sampling tests
+add_executable(test_sampling test_sampling.cpp)
+lightwatch_set_compiler_flags(test_sampling)
+add_test(NAME test_phase_35_sampling COMMAND test_sampling)
