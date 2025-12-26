@@ -169,3 +169,8 @@ add_test(NAME test_phase_35_sampling COMMAND test_sampling)
 add_executable(test_cache test_cache.cpp)
 lightwatch_set_compiler_flags(test_cache)
 add_test(NAME test_phase_36_cache COMMAND test_cache)
+
+# Phase 37: Serialization tests
+add_executable(test_serialize test_serialize.cpp)
+lightwatch_set_compiler_flags(test_serialize)
+add_test(NAME test_phase_37_serialize COMMAND test_serialize)
