@@ -30,8 +30,9 @@ FetchContent_MakeAvailable(nlohmann_json)
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
-# Source files (populated by later phases)
-# add_subdirectory(src)
+# Main executable
+add_executable(lightwatch src/main.cpp)
+lightwatch_set_compiler_flags(lightwatch)
 
 # Testing
 enable_testing()

@@ -174,3 +174,8 @@ add_test(NAME test_phase_36_cache COMMAND test_cache)
 add_executable(test_serialize test_serialize.cpp)
 lightwatch_set_compiler_flags(test_serialize)
 add_test(NAME test_phase_37_serialize COMMAND test_serialize)
+
+# Phase 38: CLI tests
+add_executable(test_cli test_cli.cpp)
+lightwatch_set_compiler_flags(test_cli)
+add_test(NAME test_phase_38_cli COMMAND test_cli)
