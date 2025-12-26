@@ -91,3 +91,8 @@ add_test(NAME test_phase_18_transformer COMMAND test_transformer)
 add_executable(test_decoder test_decoder.cpp)
 lightwatch_set_compiler_flags(test_decoder)
 add_test(NAME test_phase_19_decoder COMMAND test_decoder)
+
+# Phase 21: Loss Functions tests
+add_executable(test_loss test_loss.cpp)
+lightwatch_set_compiler_flags(test_loss)
+add_test(NAME test_phase_21_loss COMMAND test_loss)
