@@ -137,3 +137,8 @@ add_test(NAME test_phase_28_collate COMMAND test_collate)
 add_executable(test_trainer test_trainer.cpp)
 lightwatch_set_compiler_flags(test_trainer)
 add_test(NAME test_phase_29_trainer COMMAND test_trainer)
+
+# Phase 31: GPT-2 Architecture tests
+add_executable(test_gpt test_gpt.cpp)
+lightwatch_set_compiler_flags(test_gpt)
+add_test(NAME test_phase_31_gpt COMMAND test_gpt)
