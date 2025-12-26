@@ -149,3 +149,8 @@ lightwatch_set_compiler_flags(test_model_config)
 target_link_libraries(test_model_config PRIVATE nlohmann_json::nlohmann_json)
 add_test(NAME test_phase_32_model_config COMMAND test_model_config)
 set_tests_properties(test_phase_32_model_config PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+# Phase 33: Weight Initialization tests
+add_executable(test_init test_init.cpp)
+lightwatch_set_compiler_flags(test_init)
+add_test(NAME test_phase_33_init COMMAND test_init)
