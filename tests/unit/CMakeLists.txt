@@ -51,3 +51,8 @@ add_test(NAME test_phase_09_positional COMMAND test_positional)
 add_executable(test_linear test_linear.cpp)
 lightwatch_set_compiler_flags(test_linear)
 add_test(NAME test_phase_11_linear COMMAND test_linear)
+
+# Phase 12: Activation functions tests
+add_executable(test_activations test_activations.cpp)
+lightwatch_set_compiler_flags(test_activations)
+add_test(NAME test_phase_12_activations COMMAND test_activations)
