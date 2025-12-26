@@ -1,0 +1,12 @@
+{
+  "model_type": "gpt2",
+  "vocab_size": 50257,
+  "max_seq_len": 1024,
+  "embed_dim": 768,
+  "num_heads": 12,
+  "num_layers": 12,
+  "ffn_dim": 3072,
+  "dropout_p": 0.1,
+  "attn_dropout_p": 0.1,
+  "tie_weights": true
+}

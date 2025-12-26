@@ -142,3 +142,10 @@ add_test(NAME test_phase_29_trainer COMMAND test_trainer)
 add_executable(test_gpt test_gpt.cpp)
 lightwatch_set_compiler_flags(test_gpt)
 add_test(NAME test_phase_31_gpt COMMAND test_gpt)
+
+# Phase 32: Model Config tests
+add_executable(test_model_config test_model_config.cpp)
+lightwatch_set_compiler_flags(test_model_config)
+target_link_libraries(test_model_config PRIVATE nlohmann_json::nlohmann_json)
+add_test(NAME test_phase_32_model_config COMMAND test_model_config)
+set_tests_properties(test_phase_32_model_config PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
